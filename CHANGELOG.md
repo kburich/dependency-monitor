@@ -8,7 +8,7 @@ Consumers pin the floating major tag (`@v1`), which always points at the
 newest release in the `1.x` line. Pin an exact tag (`@v1.0.0`) if you need
 behaviour to stay frozen.
 
-## [Unreleased]
+## [1.1.0] - 2026-08-02
 
 Hardening driven by a real pnpm workspace scan: 1237 findings across 64
 packages, 1193 of them from 36 `@esbuild` platform variants carrying the same
@@ -72,5 +72,6 @@ Initial release.
 - `alert-on-first-run` for repositories that want the initial backlog
   reported rather than absorbed into the baseline.
 
-[Unreleased]: https://github.com/kburich/rl-protect-monitor/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/kburich/rl-protect-monitor/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/kburich/rl-protect-monitor/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/kburich/rl-protect-monitor/releases/tag/v1.0.0
