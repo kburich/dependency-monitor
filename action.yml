@@ -31,6 +31,14 @@ inputs:
     description: Path (in the consumer repo) of the committed findings baseline
     required: false
     default: .rl-protect/baseline.json
+  baseline-branch:
+    description: >-
+      Dedicated branch to store the baseline on (created as an orphan branch
+      on first run). Use when the scanned branch is protected and cannot
+      receive direct pushes. Empty = commit the baseline to the scanned
+      branch itself.
+    required: false
+    default: ""
   commit-baseline:
     description: Commit and push the updated baseline (needs contents write)
     required: false
@@ -155,13 +163,40 @@ runs:
         fi
         echo "REPORT_PATH=$REPORT" >> "$GITHUB_ENV"
 
+    - name: Resolve baseline location
+      id: baseline
+      shell: bash
+      env:
+        BASELINE_PATH: ${{ inputs.baseline-path }}
+        BASELINE_BRANCH: ${{ inputs.baseline-branch }}
+      run: |
+        if [[ -z "$BASELINE_BRANCH" ]]; then
+          # Baseline lives on the scanned branch — use it in place.
+          echo "file=$BASELINE_PATH" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        # Baseline lives on a dedicated branch: fetch it (if it exists) into
+        # a temp file so the scanned branch's working tree stays clean.
+        BFILE="$RUNNER_TEMP/rl-protect-baseline.json"
+        if git fetch --quiet origin "$BASELINE_BRANCH" 2>/dev/null; then
+          if git cat-file -e "FETCH_HEAD:$BASELINE_PATH" 2>/dev/null; then
+            git show "FETCH_HEAD:$BASELINE_PATH" > "$BFILE"
+            echo "Fetched baseline from $BASELINE_BRANCH:$BASELINE_PATH"
+          else
+            echo "Branch $BASELINE_BRANCH exists but has no $BASELINE_PATH — treating as first run"
+          fi
+        else
+          echo "Baseline branch $BASELINE_BRANCH does not exist yet — first run"
+        fi
+        echo "file=$BFILE" >> "$GITHUB_OUTPUT"
+
     - name: Diff against baseline
       id: diff
       shell: bash
       env:
         PYTHONPATH: ${{ github.action_path }}
         MONITOR_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        BASELINE_PATH: ${{ inputs.baseline-path }}
+        BASELINE_FILE: ${{ steps.baseline.outputs.file }}
         MANIFEST: ${{ steps.manifest.outputs.path }}
         ALERT_ON_FIRST_RUN: ${{ inputs.alert-on-first-run }}
       run: |
@@ -171,7 +206,7 @@ runs:
         fi
         python -m monitor.main \
           --report "$REPORT_PATH" \
-          --baseline "$BASELINE_PATH" \
+          --baseline "$BASELINE_FILE" \
           --manifest "$MANIFEST" \
           --out-dir "$RUNNER_TEMP/rl-protect-monitor-out" \
           "${EXTRA[@]}"
@@ -207,20 +242,51 @@ runs:
       shell: bash
       env:
         BASELINE_PATH: ${{ inputs.baseline-path }}
+        BASELINE_BRANCH: ${{ inputs.baseline-branch }}
+        BASELINE_FILE: ${{ steps.baseline.outputs.file }}
       run: |
-        if [[ -z "$(git status --porcelain -- "$BASELINE_PATH")" ]]; then
-          echo "Baseline unchanged — nothing to commit"
-          exit 0
-        fi
         git config user.name "rl-protect-monitor[bot]"
         git config user.email "rl-protect-monitor@users.noreply.github.com"
-        git add -- "$BASELINE_PATH"
-        git commit -m "chore(rl-protect): update findings baseline [skip ci]"
-        # Works from detached HEAD (push-triggered runs) and survives the
-        # branch having advanced since checkout.
-        git pull --rebase origin "$GITHUB_REF_NAME" || true
-        git push origin "HEAD:$GITHUB_REF_NAME"
-        echo "Baseline committed and pushed to $GITHUB_REF_NAME"
+
+        if [[ -z "$BASELINE_BRANCH" ]]; then
+          # Mode 1: baseline lives on the scanned branch.
+          if [[ -z "$(git status --porcelain -- "$BASELINE_PATH")" ]]; then
+            echo "Baseline unchanged — nothing to commit"
+            exit 0
+          fi
+          git add -- "$BASELINE_PATH"
+          git commit -m "chore(rl-protect): update findings baseline [skip ci]"
+          # Works from detached HEAD (push-triggered runs) and survives the
+          # branch having advanced since checkout.
+          git pull --rebase origin "$GITHUB_REF_NAME" || true
+          git push origin "HEAD:$GITHUB_REF_NAME"
+          echo "Baseline committed and pushed to $GITHUB_REF_NAME"
+          exit 0
+        fi
+
+        # Mode 2: baseline lives on a dedicated branch. Build the commit in
+        # a temporary worktree so the scanned checkout is never touched; the
+        # branch is created as an orphan (baseline-only history) on first run.
+        WORKTREE="$RUNNER_TEMP/rl-protect-baseline-worktree"
+        if git fetch --quiet origin "$BASELINE_BRANCH" 2>/dev/null; then
+          git worktree add --detach "$WORKTREE" FETCH_HEAD
+        else
+          git worktree add --detach "$WORKTREE"
+          git -C "$WORKTREE" checkout --quiet --orphan "rlpm-tmp-$$"
+          git -C "$WORKTREE" rm -rfq . 2>/dev/null || true
+        fi
+        mkdir -p "$WORKTREE/$(dirname "$BASELINE_PATH")"
+        cp "$BASELINE_FILE" "$WORKTREE/$BASELINE_PATH"
+        git -C "$WORKTREE" add -- "$BASELINE_PATH"
+        if git -C "$WORKTREE" diff --cached --quiet 2>/dev/null \
+           && git -C "$WORKTREE" rev-parse --verify --quiet HEAD >/dev/null; then
+          echo "Baseline unchanged — nothing to commit"
+        else
+          git -C "$WORKTREE" commit -m "chore(rl-protect): update findings baseline"
+          git -C "$WORKTREE" push origin "HEAD:refs/heads/$BASELINE_BRANCH"
+          echo "Baseline committed and pushed to $BASELINE_BRANCH"
+        fi
+        git worktree remove --force "$WORKTREE"
 
     - name: Check quota usage
       shell: bash

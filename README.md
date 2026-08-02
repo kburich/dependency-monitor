@@ -64,6 +64,7 @@ custom steps (e.g. Slack on malware).
 | `scan-profile` | `baseline` | `minimum` / `baseline` / `hardened`. `hardened` is deliberately strict — good for PR gating, noisy for a monitor |
 | `check-deps` | `release,develop,transitive` | Passed to `rl-protect scan --check-deps` |
 | `baseline-path` | `.rl-protect/baseline.json` | Committed findings baseline |
+| `baseline-branch` | — | Store the baseline on a dedicated orphan branch (e.g. `rl-protect-baseline`) instead of the scanned branch — use when the scanned branch is protected |
 | `commit-baseline` | `true` | Commit + push the updated baseline |
 | `notify` | `issue` | `issue` / `none` (job summary is always written) |
 | `issue-label` | `rl-protect-monitor` | Label of the rolling issue |
@@ -81,6 +82,12 @@ machine-readable delta).
 
 ## Operational notes
 
+- **Protected branches**: if your default branch requires PRs, the baseline
+  push will be rejected. Either add the `github-actions` app as a bypass
+  actor in your branch ruleset, or set `baseline-branch: rl-protect-baseline`
+  to keep the baseline on a dedicated orphan branch that `main`'s protection
+  doesn't cover. The scanned branch is never touched in that mode, and the
+  baseline branch keeps its own audit-trail history.
 - **Cron auto-disable**: GitHub disables scheduled workflows after 60 days
   without repo activity, and cron firing is best-effort. For a security
   monitor that failure mode is silent — set `heartbeat-url` to a

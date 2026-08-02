@@ -18,6 +18,9 @@ on:
       baseline-path:
         type: string
         default: .rl-protect/baseline.json
+      baseline-branch:
+        type: string
+        default: ""
       commit-baseline:
         type: string
         default: "true"
@@ -59,6 +62,7 @@ jobs:
           scan-profile: ${{ inputs.scan-profile }}
           check-deps: ${{ inputs.check-deps }}
           baseline-path: ${{ inputs.baseline-path }}
+          baseline-branch: ${{ inputs.baseline-branch }}
           commit-baseline: ${{ inputs.commit-baseline }}
           notify: ${{ inputs.notify }}
           issue-label: ${{ inputs.issue-label }}

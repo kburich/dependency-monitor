@@ -26,6 +26,10 @@ jobs:
     permissions:
       contents: write
       issues: write
+    # If your default branch is protected (requires PRs), store the baseline
+    # on a dedicated orphan branch instead:
+    # with:
+    #   baseline-branch: rl-protect-baseline
     secrets:
       rl-token: ${{ secrets.RL_TOKEN }}
       heartbeat-url: ${{ secrets.HEARTBEAT_URL }}
