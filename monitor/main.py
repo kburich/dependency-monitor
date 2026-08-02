@@ -39,18 +39,38 @@ def load_baseline(path: Path) -> Optional[List[Finding]]:
     return [Finding.from_dict(d) for d in data.get("findings", [])]
 
 
-def write_baseline(path: Path, findings: List[Finding], manifest: str, meta: dict) -> None:
+def _records(findings: List[Finding]) -> List[dict]:
+    # purl is part of the sort key because one package can appear at several
+    # versions under the same finding key; without it the file order would
+    # follow report order and churn between otherwise identical scans.
+    return [f.to_dict() for f in sorted(findings, key=lambda f: (f.key, f.purl))]
+
+
+def write_baseline(path: Path, findings: List[Finding], manifest: str, meta: dict,
+                   previous: Optional[List[Finding]] = None) -> bool:
+    """Write the baseline. Returns False if it was left untouched.
+
+    The payload carries a `generated` timestamp and scan metadata that move on
+    every run, so an unconditional rewrite dirties the file even when nothing
+    was found — which makes the workflow commit and push a large baseline after
+    every scheduled scan. Only a change in findings justifies a rewrite.
+    """
+    records = _records(findings)
+    if previous is not None and path.exists() and _records(previous) == records:
+        return False
+
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "schema": BASELINE_SCHEMA,
         "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+0000"),
         "manifest": manifest,
         "scan": meta,
-        "findings": [f.to_dict() for f in sorted(findings, key=lambda f: f.key)],
+        "findings": records,
     }
     with open(path, "w") as fh:
         json.dump(payload, fh, indent=2, sort_keys=False)
         fh.write("\n")
+    return True
 
 
 def _github_output(outputs: dict) -> None:
@@ -129,7 +149,10 @@ def run(argv: Optional[List[str]] = None) -> int:
         title_path.write_text(issue_title(manifest, critical))
         issue_files[name] = body_path
 
-    write_baseline(args.baseline, current, manifest, meta)
+    if write_baseline(args.baseline, current, manifest, meta, previous=baseline):
+        print(f"Baseline written to {args.baseline}", file=sys.stderr)
+    else:
+        print("Findings unchanged — baseline left untouched", file=sys.stderr)
 
     counts = delta.to_dict()["counts"]
     _github_output({

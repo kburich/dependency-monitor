@@ -4,6 +4,11 @@ Delta classes:
   - new:      finding key present now, absent in baseline  -> alert
   - resolved: finding key in baseline, absent now          -> informational
   - changed:  same key, but status escalated (warn->fail) or count grew -> alert
+
+Keys are version-independent (see normalize.Finding.key), so a dependency
+upgrade that carries a finding forward is silent rather than a resolved/new
+pair. A package version change on its own is never an alert; it is annotated
+on the row when it accompanies a real escalation.
 """
 
 from __future__ import annotations
@@ -23,11 +28,16 @@ class Change:
     def escalated(self) -> bool:
         return STATUS_RANK.get(self.after.status, 0) > STATUS_RANK.get(self.before.status, 0)
 
+    @property
+    def version_changed(self) -> bool:
+        return self.before.version != self.after.version
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "before": self.before.to_dict(),
             "after": self.after.to_dict(),
             "escalated": self.escalated,
+            "version_changed": self.version_changed,
         }
 
 
@@ -79,9 +89,32 @@ class Delta:
         }
 
 
+def _rank(f: Finding) -> tuple:
+    # purl breaks ties so the retained finding does not depend on report order
+    return (STATUS_RANK.get(f.status, 0), f.count, f.purl)
+
+
+def _worse(a: Finding, b: Finding) -> Finding:
+    return b if _rank(b) > _rank(a) else a
+
+
+def _index(findings: Iterable[Finding]) -> Dict[Any, Finding]:
+    """Map key -> finding, keeping the worst on collision.
+
+    Two versions of the same package routinely coexist in one lockfile (a real
+    pnpm scan had 20 packages present at two versions), and they now share a
+    key; reporting the more severe of the two is the conservative choice.
+    """
+    indexed: Dict[Any, Finding] = {}
+    for f in findings:
+        existing = indexed.get(f.key)
+        indexed[f.key] = _worse(existing, f) if existing else f
+    return indexed
+
+
 def diff(baseline: Iterable[Finding], current: Iterable[Finding]) -> Delta:
-    base_by_key = {f.key: f for f in baseline}
-    curr_by_key = {f.key: f for f in current}
+    base_by_key = _index(baseline)
+    curr_by_key = _index(current)
 
     delta = Delta()
     for key, finding in sorted(curr_by_key.items()):

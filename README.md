@@ -107,6 +107,15 @@ machine-readable delta).
   Modern `yarn.lock` (Yarn 2+) is not supported by rl-protect.
 - **Monitor the lockfile, not the manifest** — otherwise you're monitoring
   a version range instead of what's actually installed.
+- **Upgrades don't page you**: findings are keyed by package *without* the
+  version, so bumping a dependency that carries the same CVE forward is
+  silent. Without that, one lockfile bump of a package like `esbuild` — which
+  ships ~20 per-platform variants, each carrying the same Go stdlib CVEs —
+  would report ~800 findings as resolved and ~800 as new.
+- **Alerts are grouped and capped**: the issue body groups one row per
+  finding (listing the affected packages) and caps the table, since a real
+  scan can produce 1200+ findings from 58 distinct CVEs. The complete,
+  ungrouped delta is always in the `delta.json` workflow artifact.
 
 ## Development
 

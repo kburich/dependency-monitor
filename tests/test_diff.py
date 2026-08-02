@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from monitor.diff import diff
-from monitor.normalize import Finding, normalize, scan_metadata
+from monitor.normalize import Finding, normalize, scan_metadata, split_purl
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -27,8 +27,12 @@ class TestNormalize:
         result = findings("report_baseline.json")
         keys = {f.key for f in result}
         assert keys == {
-            ("pkg:npm/lodash@4.17.21", "hardening", "hardening"),
-            ("pkg:npm/ua-parser-js@0.7.28", "vulnerabilities", "CVE-2021-27292"),
+            ("pkg:npm/lodash", "hardening", "hardening"),
+            ("pkg:npm/ua-parser-js", "vulnerabilities", "CVE-2021-27292"),
+        }
+        assert {f.purl for f in result} == {
+            "pkg:npm/lodash@4.17.21",
+            "pkg:npm/ua-parser-js@0.7.28",
         }
 
     def test_warning_status_normalized_to_warn(self):
@@ -64,6 +68,26 @@ class TestNormalize:
         assert meta["profile"] == "baseline"
 
 
+class TestSplitPurl:
+    @pytest.mark.parametrize("purl,base,version", [
+        ("pkg:npm/lodash@4.17.21", "pkg:npm/lodash", "4.17.21"),
+        # scoped npm names are percent-encoded, so "%40" is not a separator
+        ("pkg:npm/%40esbuild/linux-x64@0.21.5", "pkg:npm/%40esbuild/linux-x64", "0.21.5"),
+        ("pkg:pypi/requests@2.31.0", "pkg:pypi/requests", "2.31.0"),
+        ("pkg:npm/lodash", "pkg:npm/lodash", ""),
+        ("pkg:npm/foo@1.0.0?arch=x64", "pkg:npm/foo?arch=x64", "1.0.0"),
+        ("pkg:golang/github.com/x/y@v1.2.3", "pkg:golang/github.com/x/y", "v1.2.3"),
+    ])
+    def test_split(self, purl, base, version):
+        assert split_purl(purl) == (base, version)
+
+    def test_finding_exposes_base_and_version(self):
+        f = Finding(purl="pkg:npm/lodash@4.17.21", category="hardening",
+                    finding_id="hardening", status="warn")
+        assert f.base_purl == "pkg:npm/lodash"
+        assert f.version == "4.17.21"
+
+
 class TestDiff:
     def test_identical_reports_empty_delta(self):
         delta = diff(findings("report_baseline.json"), findings("report_baseline.json"))
@@ -88,7 +112,7 @@ class TestDiff:
         delta = diff(findings("report_baseline.json"), findings("report_resolved.json"))
         assert delta.new == []
         assert [f.key for f in delta.resolved] == [
-            ("pkg:npm/lodash@4.17.21", "hardening", "hardening")
+            ("pkg:npm/lodash", "hardening", "hardening")
         ]
         assert not delta.has_alerts  # resolved alone should not alert
 
@@ -128,6 +152,38 @@ class TestDiff:
         delta = diff([], findings("report_baseline.json"))
         assert len(delta.new) == 2
         assert delta.resolved == []
+
+    def test_version_bump_alone_is_not_an_alert(self):
+        report = load("report_baseline.json")
+        bumped = deepcopy(report)
+        for pkg in bumped["analysis"]["report"]["packages"]:
+            pkg["purl"] = pkg["purl"].replace("@4.17.21", "@4.17.22") \
+                                     .replace("@0.7.28", "@0.7.29")
+        delta = diff(normalize(report), normalize(bumped))
+        assert delta.is_empty, "an upgrade that carries findings forward must be silent"
+
+    def test_version_bump_with_escalation_is_annotated(self):
+        report = load("report_baseline.json")
+        bumped = deepcopy(report)
+        pkg = next(p for p in bumped["analysis"]["report"]["packages"]
+                   if p["purl"] == "pkg:npm/lodash@4.17.21")
+        pkg["purl"] = "pkg:npm/lodash@4.17.22"
+        pkg["analysis"]["assessment"]["hardening"]["status"] = "fail"
+        delta = diff(normalize(report), normalize(bumped))
+        assert len(delta.changed) == 1
+        assert delta.changed[0].escalated
+        assert delta.changed[0].version_changed
+        assert delta.changed[0].to_dict()["version_changed"] is True
+
+    def test_two_versions_of_one_package_keep_the_worse(self):
+        shared = dict(category="hardening", finding_id="hardening")
+        old = Finding(purl="pkg:npm/lodash@3.0.0", status="warn", count=1, **shared)
+        new = Finding(purl="pkg:npm/lodash@4.17.21", status="fail", count=5, **shared)
+        delta = diff([Finding(purl="pkg:npm/lodash@3.0.0", status="warn",
+                              count=1, **shared)], [old, new])
+        assert delta.new == []
+        assert len(delta.changed) == 1
+        assert delta.changed[0].after.status == "fail"
 
 
 if __name__ == "__main__":
