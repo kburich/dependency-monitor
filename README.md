@@ -1,5 +1,11 @@
 # rl-protect-monitor
 
+<p align="center">
+  <img src="docs/banner.svg" alt="A developer sleeps peacefully while a friendly shield stands guard under a crescent moon" width="720">
+</p>
+
+<p align="center"><em>Sleep tight while we watch over your dependencies.</em></p>
+
 GitHub Action that periodically re-scans your dependency manifest with
 [ReversingLabs rl-protect](https://docs.secure.software/) and alerts you —
 via GitHub Issues — **only when something changes**: a new malware verdict,
@@ -127,5 +133,4 @@ Slack/SARIF/email notifiers · multi-manifest matrix · org-wide central mode.
 
 ## License
 
-MIT. Not affiliated with ReversingLabs; `rl-protect` and Spectra Assure are
-their products — this action just orchestrates them.
+MIT

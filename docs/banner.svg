@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 320" width="960" height="320" role="img" aria-label="A developer sleeps peacefully while a shield stands guard under the night sky">
+  <!-- All colors are mid-tones chosen to read on both GitHub light and dark
+       backgrounds — no prefers-color-scheme dependency (unreliable for
+       SVG-in-img, which follows the OS theme rather than GitHub's). -->
+  <style>
+    .ink    { fill: #8b93a1; }
+    .subtle { fill: #8b93a1; }
+    .stroke-ink { stroke: #3d4148; }
+    .pillow { fill: #e2e8f0; }
+    .moon   { fill: #f2c14e; }
+  </style>
+
+  <!-- ground line -->
+  <rect x="120" y="262" width="720" height="4" rx="2" class="subtle" opacity="0.35"/>
+
+  <!-- stars -->
+  <g class="subtle">
+    <circle cx="150" cy="80" r="3"/>
+    <circle cx="420" cy="48" r="2.5"/>
+    <circle cx="560" cy="96" r="3"/>
+    <circle cx="880" cy="70" r="2.5"/>
+    <path transform="translate(500,150) scale(0.8)" d="M0,-10 L2.5,-2.5 L10,0 L2.5,2.5 L0,10 L-2.5,2.5 L-10,0 L-2.5,-2.5 Z"/>
+    <path transform="translate(830,150) scale(0.6)" d="M0,-10 L2.5,-2.5 L10,0 L2.5,2.5 L0,10 L-2.5,2.5 L-10,0 L-2.5,-2.5 Z"/>
+  </g>
+
+  <!-- crescent moon -->
+  <g>
+    <mask id="crescent">
+      <rect x="600" y="20" width="160" height="160" fill="white"/>
+      <circle cx="700" cy="76" r="38" fill="black"/>
+    </mask>
+    <circle cx="680" cy="88" r="42" class="moon" mask="url(#crescent)"/>
+  </g>
+
+  <!-- zZz -->
+  <g class="ink" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-style="italic" font-weight="bold">
+    <text x="330" y="150" font-size="20">z</text>
+    <text x="352" y="122" font-size="27">Z</text>
+    <text x="382" y="90" font-size="34">z</text>
+  </g>
+
+  <!-- sleeping developer -->
+  <g>
+    <!-- pillow -->
+    <rect x="188" y="206" width="142" height="52" rx="24" class="pillow"/>
+    <!-- blanket over body -->
+    <path d="M300,196 h190 q46,0 46,36 v34 h-236 Z" fill="#818cf8"/>
+    <!-- blanket fold line -->
+    <path d="M330,196 v70" stroke="#6366f1" stroke-width="5" fill="none" stroke-linecap="round"/>
+    <!-- head -->
+    <circle cx="255" cy="200" r="36" fill="#f3c5a8"/>
+    <!-- hair -->
+    <path d="M219,200 A36 36 0 0 1 286,182 Z" fill="#4a4038"/>
+    <!-- closed eyes -->
+    <path d="M238,206 q6,7 13,0" class="stroke-ink" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+    <path d="M264,206 q6,7 13,0" class="stroke-ink" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+    <!-- content smile -->
+    <path d="M250,222 q6,5 12,0" class="stroke-ink" stroke-width="3" fill="none" stroke-linecap="round"/>
+  </g>
+
+  <!-- shield, standing guard -->
+  <g>
+    <ellipse cx="740" cy="264" rx="52" ry="7" class="subtle" opacity="0.3"/>
+    <path d="M740,140 c-16,10 -38,16 -56,17 v52 c0,32 34,49 56,57 c22,-8 56,-25 56,-57 v-52 c-18,-1 -40,-7 -56,-17 Z" fill="#4f46e5"/>
+    <!-- awake eyes, looking toward the sleeper -->
+    <circle cx="722" cy="198" r="10" fill="#ffffff"/>
+    <circle cx="758" cy="198" r="10" fill="#ffffff"/>
+    <circle cx="718" cy="200" r="4.5" fill="#1f2430"/>
+    <circle cx="754" cy="200" r="4.5" fill="#1f2430"/>
+    <!-- calm smile -->
+    <path d="M731,226 q9,7 18,0" stroke="#ffffff" stroke-width="4" fill="none" stroke-linecap="round"/>
+  </g>
+</svg>
