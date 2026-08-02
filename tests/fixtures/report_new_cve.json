@@ -1,0 +1,76 @@
+{
+  "analysis": {
+    "schema": 1,
+    "profile": {
+      "name": "baseline"
+    },
+    "timestamp": "2026-08-02T06:00:09+0000",
+    "duration": 4.4,
+    "catalogue": "2026-08-01",
+    "report": {
+      "packages": [
+        {
+          "purl": "pkg:npm/react@19.1.5",
+          "license": "Permissive (MIT)",
+          "homepage": "https://react.dev/",
+          "dependencies": [],
+          "analysis": {
+            "assessment": {
+              "secrets": { "status": "pass", "label": "No secrets detected", "count": 0 },
+              "licenses": { "status": "pass", "label": "No license issues", "count": 0 },
+              "vulnerabilities": { "status": "pass", "label": "No known vulnerabilities", "count": 0 },
+              "hardening": { "status": "pass", "label": "No hardening issues", "count": 0 },
+              "tampering": { "status": "pass", "label": "No tampering detected", "count": 0 },
+              "malware": { "status": "pass", "label": "No malware detected", "count": 0 }
+            }
+          }
+        },
+        {
+          "purl": "pkg:npm/lodash@4.17.21",
+          "license": "Permissive (MIT)",
+          "homepage": "https://lodash.com/",
+          "dependencies": [],
+          "analysis": {
+            "assessment": {
+              "secrets": { "status": "pass", "label": "No secrets detected", "count": 0 },
+              "licenses": { "status": "pass", "label": "No license issues", "count": 0 },
+              "vulnerabilities": { "status": "pass", "label": "No known vulnerabilities", "count": 0 },
+              "hardening": { "status": "warning", "label": "Missing security mitigations", "count": 2 },
+              "tampering": { "status": "pass", "label": "No tampering detected", "count": 0 },
+              "malware": { "status": "pass", "label": "No malware detected", "count": 0 }
+            }
+          }
+        },
+        {
+          "purl": "pkg:npm/ua-parser-js@0.7.28",
+          "license": "Permissive (MIT)",
+          "homepage": "https://github.com/faisalman/ua-parser-js",
+          "dependencies": [],
+          "analysis": {
+            "assessment": {
+              "secrets": { "status": "pass", "label": "No secrets detected", "count": 0 },
+              "licenses": { "status": "pass", "label": "No license issues", "count": 0 },
+              "vulnerabilities": { "status": "fail", "label": "Known vulnerabilities detected", "count": 2 },
+              "hardening": { "status": "pass", "label": "No hardening issues", "count": 0 },
+              "tampering": { "status": "pass", "label": "No tampering detected", "count": 0 },
+              "malware": { "status": "pass", "label": "No malware detected", "count": 0 }
+            },
+            "vulnerabilities": {
+              "CVE-2021-27292": {
+                "name": "CVE-2021-27292",
+                "summary": "ReDoS vulnerability via crafted User-Agent string",
+                "cvss": { "baseScore": 7.5 }
+              },
+              "CVE-2022-25927": {
+                "name": "CVE-2022-25927",
+                "summary": "ReDoS in the trim() function via a long user agent string",
+                "cvss": { "baseScore": 7.5 }
+              }
+            }
+          }
+        }
+      ],
+      "errors": []
+    }
+  }
+}

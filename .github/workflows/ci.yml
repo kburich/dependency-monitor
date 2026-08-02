@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install --quiet pytest
+      - run: python -m pytest tests/ -v
+
+  smoke:
+    # End-to-end run of the diff engine CLI against fixtures, the same way
+    # action.yml invokes it.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: First run creates baseline
+        run: |
+          python -m monitor.main \
+            --report tests/fixtures/report_baseline.json \
+            --baseline /tmp/baseline.json \
+            --manifest package-lock.json \
+            --out-dir /tmp/out
+          test -s /tmp/baseline.json
+      - name: Second run detects malware delta
+        run: |
+          python -m monitor.main \
+            --report tests/fixtures/report_new_malware.json \
+            --baseline /tmp/baseline.json \
+            --manifest package-lock.json \
+            --out-dir /tmp/out2
+          grep -q "malware" /tmp/out2/issue_critical.md
+          grep -q '"new_critical": 1' /tmp/out2/delta.json

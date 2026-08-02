@@ -1,0 +1,33 @@
+# Direct use of the composite action (instead of the reusable workflow),
+# for when you want to add your own steps around it.
+
+name: Dependency monitor
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: rl
+        uses: kburich/rl-protect-monitor@v1
+        with:
+          rl-token: ${{ secrets.RL_TOKEN }}
+          # manifest-path: package-lock.json   # omit to auto-detect
+          # scan-profile: hardened             # baseline is the default
+          # fail-on: critical                  # never (default) for pure monitoring
+
+      # Example of building on the outputs — e.g. a Slack ping on malware:
+      - if: steps.rl.outputs.has-critical-alerts == 'true'
+        run: |
+          curl -fsS -X POST -H 'Content-Type: application/json' \
+            -d '{"text":"🚨 rl-protect flagged malware in ${{ github.repository }} — see the rl-protect-malware issue."}' \
+            "${{ secrets.SLACK_WEBHOOK_URL }}"

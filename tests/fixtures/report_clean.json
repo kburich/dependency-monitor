@@ -1,0 +1,32 @@
+{
+  "analysis": {
+    "schema": 1,
+    "profile": {
+      "name": "baseline"
+    },
+    "timestamp": "2026-08-01T06:00:12+0000",
+    "duration": 1.1,
+    "catalogue": "2026-07-31",
+    "report": {
+      "packages": [
+        {
+          "purl": "pkg:npm/react@19.1.5",
+          "license": "Permissive (MIT)",
+          "homepage": "https://react.dev/",
+          "dependencies": [],
+          "analysis": {
+            "assessment": {
+              "secrets": { "status": "pass", "label": "No secrets detected", "count": 0 },
+              "licenses": { "status": "pass", "label": "No license issues", "count": 0 },
+              "vulnerabilities": { "status": "pass", "label": "No known vulnerabilities", "count": 0 },
+              "hardening": { "status": "pass", "label": "No hardening issues", "count": 0 },
+              "tampering": { "status": "pass", "label": "No tampering detected", "count": 0 },
+              "malware": { "status": "pass", "label": "No malware detected", "count": 0 }
+            }
+          }
+        }
+      ],
+      "errors": []
+    }
+  }
+}

@@ -1,0 +1,269 @@
+name: rl-protect-monitor
+description: >-
+  Periodically re-scan your dependency manifest with ReversingLabs rl-protect
+  and get notified (GitHub Issues) only when new malware, tampering, or
+  vulnerability findings appear — delta-only alerts against a committed baseline.
+author: Kresimir Buric
+branding:
+  icon: shield
+  color: red
+
+inputs:
+  rl-token:
+    description: Spectra Assure Community (rlcmm*) or Portal (rls3c*) token
+    required: true
+  manifest-path:
+    description: >-
+      Path to the manifest/lockfile to scan. Empty = auto-detect (prefers
+      lockfiles: package-lock.json, pnpm-lock.yaml, yarn.lock, poetry.lock,
+      uv.lock, requirements.txt, Gemfile.lock, then manifests).
+    required: false
+    default: ""
+  scan-profile:
+    description: rl-protect scan profile (minimum | baseline | hardened)
+    required: false
+    default: baseline
+  check-deps:
+    description: Dependency types to check (passed to --check-deps)
+    required: false
+    default: release,develop,transitive
+  baseline-path:
+    description: Path (in the consumer repo) of the committed findings baseline
+    required: false
+    default: .rl-protect/baseline.json
+  commit-baseline:
+    description: Commit and push the updated baseline (needs contents write)
+    required: false
+    default: "true"
+  notify:
+    description: Notification channel (issue | none). Job summary always written.
+    required: false
+    default: issue
+  issue-label:
+    description: Label identifying the rolling notification issue
+    required: false
+    default: rl-protect-monitor
+  alert-on-first-run:
+    description: Alert on all findings when no baseline exists yet
+    required: false
+    default: "false"
+  fail-on:
+    description: Fail the job on findings (never | critical | any-new)
+    required: false
+    default: never
+  heartbeat-url:
+    description: Optional URL (e.g. healthchecks.io) pinged after a successful run
+    required: false
+    default: ""
+  python-version:
+    description: Python version used to run rl-protect and the diff engine
+    required: false
+    default: "3.12"
+  github-token:
+    description: Token for issue notifications and baseline pushes
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  new-count:
+    description: Number of new findings since the baseline
+    value: ${{ steps.diff.outputs.new-count }}
+  new-critical-count:
+    description: Number of new/worsened malware or tampering findings
+    value: ${{ steps.diff.outputs.new-critical-count }}
+  resolved-count:
+    description: Number of findings resolved since the baseline
+    value: ${{ steps.diff.outputs.resolved-count }}
+  has-alerts:
+    description: '"true" when any new or worsened finding was detected'
+    value: ${{ steps.diff.outputs.has-alerts }}
+  has-critical-alerts:
+    description: '"true" when a malware/tampering finding was detected'
+    value: ${{ steps.diff.outputs.has-critical-alerts }}
+  first-run:
+    description: '"true" when this run created the initial baseline'
+    value: ${{ steps.diff.outputs.first-run }}
+  delta-json:
+    description: Path to the machine-readable delta report
+    value: ${{ steps.diff.outputs.delta-json }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install rl-protect
+      shell: bash
+      run: python -m pip install --quiet rl-protect
+
+    - name: Connect to Spectra Assure
+      shell: bash
+      env:
+        RL_TOKEN: ${{ inputs.rl-token }}
+      run: rl-protect server connect --rl-token="$RL_TOKEN"
+
+    - name: Resolve manifest path
+      id: manifest
+      shell: bash
+      env:
+        MANIFEST_INPUT: ${{ inputs.manifest-path }}
+      run: |
+        if [[ -n "$MANIFEST_INPUT" ]]; then
+          if [[ ! -f "$MANIFEST_INPUT" ]]; then
+            echo "::error::manifest-path '$MANIFEST_INPUT' not found"
+            exit 1
+          fi
+          echo "path=$MANIFEST_INPUT" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        # Auto-detect: lockfiles first (they pin what is actually installed)
+        for candidate in package-lock.json pnpm-lock.yaml yarn.lock \
+                         poetry.lock uv.lock requirements.txt Gemfile.lock \
+                         pyproject.toml setup.cfg package.json Gemfile; do
+          if [[ -f "$candidate" ]]; then
+            echo "Auto-detected manifest: $candidate"
+            echo "path=$candidate" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+        done
+        echo "::error::No supported manifest found; set the manifest-path input"
+        exit 1
+
+    - name: Scan with rl-protect
+      shell: bash
+      env:
+        MANIFEST: ${{ steps.manifest.outputs.path }}
+        SCAN_PROFILE: ${{ inputs.scan-profile }}
+        CHECK_DEPS: ${{ inputs.check-deps }}
+      run: |
+        REPORT="$RUNNER_TEMP/rl-protect.report.json"
+        # Exit code 1 just means findings exist — that is normal for a
+        # monitor. Only a missing report is a real failure.
+        set +e
+        rl-protect scan "$MANIFEST" \
+          --scan-profile="$SCAN_PROFILE" \
+          --check-deps="$CHECK_DEPS" \
+          --save-report="$REPORT"
+        SCAN_EXIT=$?
+        set -e
+        echo "rl-protect scan exit code: $SCAN_EXIT (informational)"
+        if [[ ! -s "$REPORT" ]]; then
+          echo "::error::rl-protect produced no report — scan failed (exit $SCAN_EXIT)"
+          exit 1
+        fi
+        echo "REPORT_PATH=$REPORT" >> "$GITHUB_ENV"
+
+    - name: Diff against baseline
+      id: diff
+      shell: bash
+      env:
+        PYTHONPATH: ${{ github.action_path }}
+        MONITOR_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        BASELINE_PATH: ${{ inputs.baseline-path }}
+        MANIFEST: ${{ steps.manifest.outputs.path }}
+        ALERT_ON_FIRST_RUN: ${{ inputs.alert-on-first-run }}
+      run: |
+        EXTRA=()
+        if [[ "$ALERT_ON_FIRST_RUN" == "true" ]]; then
+          EXTRA+=(--alert-on-first-run)
+        fi
+        python -m monitor.main \
+          --report "$REPORT_PATH" \
+          --baseline "$BASELINE_PATH" \
+          --manifest "$MANIFEST" \
+          --out-dir "$RUNNER_TEMP/rl-protect-monitor-out" \
+          "${EXTRA[@]}"
+
+    - name: Notify via GitHub issue
+      if: inputs.notify == 'issue' && steps.diff.outputs.has-alerts == 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PYTHONPATH: ${{ github.action_path }}
+        ISSUE_LABEL: ${{ inputs.issue-label }}
+        CRITICAL_BODY: ${{ steps.diff.outputs.issue-critical-body }}
+        STANDARD_BODY: ${{ steps.diff.outputs.issue-standard-body }}
+      run: |
+        OUT="$RUNNER_TEMP/rl-protect-monitor-out"
+        if [[ -n "$CRITICAL_BODY" ]]; then
+          python -m monitor.gh_issue \
+            --repo "$GITHUB_REPOSITORY" \
+            --title-file "$OUT/issue_critical.title" \
+            --body-file "$CRITICAL_BODY" \
+            --label "rl-protect-malware" --label "$ISSUE_LABEL"
+        fi
+        if [[ -n "$STANDARD_BODY" ]]; then
+          python -m monitor.gh_issue \
+            --repo "$GITHUB_REPOSITORY" \
+            --title-file "$OUT/issue_standard.title" \
+            --body-file "$STANDARD_BODY" \
+            --label "$ISSUE_LABEL"
+        fi
+
+    - name: Commit updated baseline
+      if: inputs.commit-baseline == 'true'
+      shell: bash
+      env:
+        BASELINE_PATH: ${{ inputs.baseline-path }}
+      run: |
+        if [[ -z "$(git status --porcelain -- "$BASELINE_PATH")" ]]; then
+          echo "Baseline unchanged — nothing to commit"
+          exit 0
+        fi
+        git config user.name "rl-protect-monitor[bot]"
+        git config user.email "rl-protect-monitor@users.noreply.github.com"
+        git add -- "$BASELINE_PATH"
+        git commit -m "chore(rl-protect): update findings baseline [skip ci]"
+        # Works from detached HEAD (push-triggered runs) and survives the
+        # branch having advanced since checkout.
+        git pull --rebase origin "$GITHUB_REF_NAME" || true
+        git push origin "HEAD:$GITHUB_REF_NAME"
+        echo "Baseline committed and pushed to $GITHUB_REF_NAME"
+
+    - name: Check quota usage
+      shell: bash
+      run: |
+        set +e
+        LISTING="$(rl-protect server list 2>&1)"
+        set -e
+        USAGE_LINE="$(grep -oE 'Usage:[^,]*' <<< "$LISTING" | head -1)"
+        echo "$USAGE_LINE"
+        USED="$(grep -oE '[0-9]+ */ *[0-9]+' <<< "$USAGE_LINE" | awk -F/ '{gsub(/ /,""); print $1}')"
+        TOTAL="$(grep -oE '[0-9]+ */ *[0-9]+' <<< "$USAGE_LINE" | awk -F/ '{gsub(/ /,""); print $2}')"
+        if [[ -n "$USED" && -n "$TOTAL" && "$TOTAL" -gt 0 ]]; then
+          PCT=$(( USED * 100 / TOTAL ))
+          if (( PCT >= 80 )); then
+            echo "::warning::Spectra Assure quota at ${PCT}% (${USED}/${TOTAL} units). Consider reducing scan cadence or check-deps scope."
+            echo "> ⚠️ Spectra Assure quota at **${PCT}%** (${USED}/${TOTAL} units this month)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+        fi
+
+    - name: Evaluate fail-on gate
+      shell: bash
+      env:
+        FAIL_ON: ${{ inputs.fail-on }}
+        HAS_ALERTS: ${{ steps.diff.outputs.has-alerts }}
+        HAS_CRITICAL: ${{ steps.diff.outputs.has-critical-alerts }}
+      run: |
+        case "$FAIL_ON" in
+          critical)
+            if [[ "$HAS_CRITICAL" == "true" ]]; then
+              echo "::error::fail-on=critical — malware/tampering finding detected"
+              exit 1
+            fi ;;
+          any-new)
+            if [[ "$HAS_ALERTS" == "true" ]]; then
+              echo "::error::fail-on=any-new — new findings detected"
+              exit 1
+            fi ;;
+          *) echo "fail-on=$FAIL_ON — not gating" ;;
+        esac
+
+    - name: Heartbeat ping
+      if: inputs.heartbeat-url != ''
+      shell: bash
+      env:
+        HEARTBEAT_URL: ${{ inputs.heartbeat-url }}
+      run: curl -fsS -m 10 --retry 3 -o /dev/null "$HEARTBEAT_URL"

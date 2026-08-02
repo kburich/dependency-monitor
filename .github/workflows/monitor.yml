@@ -1,0 +1,67 @@
+# Reusable workflow — call this from your repo with `workflow_call`.
+# See examples/consumer-reusable.yml for the consumer stanza.
+
+name: rl-protect monitor
+
+on:
+  workflow_call:
+    inputs:
+      manifest-path:
+        type: string
+        default: ""
+      scan-profile:
+        type: string
+        default: baseline
+      check-deps:
+        type: string
+        default: release,develop,transitive
+      baseline-path:
+        type: string
+        default: .rl-protect/baseline.json
+      commit-baseline:
+        type: string
+        default: "true"
+      notify:
+        type: string
+        default: issue
+      issue-label:
+        type: string
+        default: rl-protect-monitor
+      alert-on-first-run:
+        type: string
+        default: "false"
+      fail-on:
+        type: string
+        default: never
+    secrets:
+      rl-token:
+        required: true
+      heartbeat-url:
+        # Treated as a secret: healthchecks-style ping URLs embed a token.
+        required: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # baseline commit-back
+      issues: write     # rolling notification issues
+    concurrency:
+      group: rl-protect-monitor-${{ github.repository }}-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: kburich/rl-protect-monitor@v1
+        with:
+          rl-token: ${{ secrets.rl-token }}
+          manifest-path: ${{ inputs.manifest-path }}
+          scan-profile: ${{ inputs.scan-profile }}
+          check-deps: ${{ inputs.check-deps }}
+          baseline-path: ${{ inputs.baseline-path }}
+          commit-baseline: ${{ inputs.commit-baseline }}
+          notify: ${{ inputs.notify }}
+          issue-label: ${{ inputs.issue-label }}
+          alert-on-first-run: ${{ inputs.alert-on-first-run }}
+          fail-on: ${{ inputs.fail-on }}
+          heartbeat-url: ${{ secrets.heartbeat-url || '' }}

@@ -1,0 +1,31 @@
+# Copy this into your repo as .github/workflows/rl-protect-monitor.yml
+#
+# Secrets to configure in your repo:
+#   RL_TOKEN        — Spectra Assure Community token (free: https://secure.software/)
+#   HEARTBEAT_URL   — optional healthchecks.io-style ping URL
+
+name: Dependency monitor
+
+on:
+  schedule:
+    - cron: "0 6 * * *"   # daily; the RL database doesn't update faster than this
+  workflow_dispatch: {}    # manual runs + keeps the cron from looking abandoned
+  push:
+    paths:
+      - "package-lock.json"
+      - "pnpm-lock.yaml"
+      - "yarn.lock"
+      - "requirements.txt"
+      - "poetry.lock"
+      - "uv.lock"
+      - "Gemfile.lock"
+
+jobs:
+  monitor:
+    uses: kburich/rl-protect-monitor/.github/workflows/monitor.yml@v1
+    permissions:
+      contents: write
+      issues: write
+    secrets:
+      rl-token: ${{ secrets.RL_TOKEN }}
+      heartbeat-url: ${{ secrets.HEARTBEAT_URL }}
