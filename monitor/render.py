@@ -1,40 +1,126 @@
-"""Render a Delta into Markdown: job summary + GitHub issue bodies."""
+"""Render a Delta into Markdown: job summary + GitHub issue bodies.
+
+Real reports are large and highly repetitive: a single Go-based npm package
+ships ~20 per-platform variants that each carry the same stdlib CVEs, so 58
+distinct CVEs can expand to 1200+ findings. Rows are therefore grouped by
+finding (not by package), tables are capped, and issue bodies are clipped to
+GitHub's hard body limit so the `gh issue create` call can never 422.
+"""
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from .diff import Change, Delta
 from .normalize import Finding
 
 _STATUS_EMOJI = {"warn": "⚠️", "fail": "❌"}
 
+#: Max grouped rows per table. Issue bodies are tighter than job summaries.
+MAX_ROWS_ISSUE = 40
+MAX_ROWS_SUMMARY = 100
 
-def _finding_row(f: Finding) -> str:
-    score = f"{f.score}" if f.score is not None else "—"
-    emoji = _STATUS_EMOJI.get(f.status, "")
-    return f"| `{f.purl}` | {f.category} | {f.finding_id} | {emoji} {f.status} | {score} | {f.title} |"
+#: Packages listed inline in a grouped row before collapsing to "+N more".
+MAX_PACKAGES_PER_ROW = 3
+
+#: GitHub rejects issue bodies over 65536 characters.
+GITHUB_BODY_LIMIT = 65536
+
+_FULL_LIST_NOTE = ("_The full, ungrouped list is in the `delta.json` "
+                   "workflow artifact._")
 
 
-def _finding_table(findings: List[Finding]) -> str:
+def _fmt_score(score: Optional[float]) -> str:
+    # Scores arrive as float32 artifacts (5.300000190734863).
+    return "—" if score is None else f"{score:.1f}"
+
+
+def _packages_cell(purls: List[str]) -> str:
+    shown = [f"`{p}`" for p in purls[:MAX_PACKAGES_PER_ROW]]
+    extra = len(purls) - len(shown)
+    if extra > 0:
+        shown.append(f"+{extra} more")
+    return "<br>".join(shown)
+
+
+def _group_findings(findings: List[Finding]) -> List[Tuple[Finding, List[str]]]:
+    """Collapse findings that are the same issue seen on several packages.
+
+    Grouped on everything a row displays except the package, so a row never
+    merges rows that would have read differently.
+    """
+    groups: Dict[Tuple, Tuple[Finding, List[str]]] = {}
+    for f in findings:
+        key = (f.category, f.finding_id, f.status, f.count, f.title)
+        if key in groups:
+            groups[key][1].append(f.purl)
+        else:
+            groups[key] = (f, [f.purl])
+    return [(f, sorted(purls)) for f, purls in groups.values()]
+
+
+def _group_changes(changes: List[Change]) -> List[Tuple[Change, List[str]]]:
+    groups: Dict[Tuple, Tuple[Change, List[str]]] = {}
+    for c in changes:
+        key = (c.after.category, c.after.finding_id, c.before.status,
+               c.before.count, c.after.status, c.after.count)
+        if key in groups:
+            groups[key][1].append(c.after.purl)
+        else:
+            groups[key] = (c, [c.after.purl])
+    return [(c, sorted(purls)) for c, purls in groups.values()]
+
+
+def _table(header: str, rows: List[str], total_groups: int, max_rows: int) -> str:
+    shown = rows[:max_rows]
+    out = "\n".join([header] + shown)
+    hidden = total_groups - len(shown)
+    if hidden > 0:
+        out += (f"\n\n_… and {hidden} more finding"
+                f"{'s' if hidden != 1 else ''} not shown._ {_FULL_LIST_NOTE}")
+    return out
+
+
+def _finding_table(findings: List[Finding], max_rows: int = MAX_ROWS_SUMMARY) -> str:
     header = (
-        "| Package | Category | Finding | Status | CVSS | Details |\n"
+        "| Packages | Category | Finding | Status | CVSS | Details |\n"
         "|---|---|---|---|---|---|"
     )
-    return "\n".join([header] + [_finding_row(f) for f in findings])
+    groups = _group_findings(findings)
+    rows = [
+        f"| {_packages_cell(purls)} | {f.category} | {f.finding_id} | "
+        f"{_STATUS_EMOJI.get(f.status, '')} {f.status} | {_fmt_score(f.score)} | "
+        f"{f.title} |"
+        for f, purls in groups
+    ]
+    return _table(header, rows, len(groups), max_rows)
 
 
-def _change_row(c: Change) -> str:
-    what = "status escalated" if c.escalated else "count increased"
-    return (
-        f"| `{c.after.purl}` | {c.after.category} | {c.after.finding_id} | {what} | "
-        f"{c.before.status}({c.before.count}) → {c.after.status}({c.after.count}) |"
-    )
+def _change_table(changes: List[Change], max_rows: int = MAX_ROWS_SUMMARY) -> str:
+    header = ("| Packages | Category | Finding | Change | Before → After |\n"
+              "|---|---|---|---|---|")
+    groups = _group_changes(changes)
+    rows = []
+    for c, purls in groups:
+        what = "status escalated" if c.escalated else "count increased"
+        if c.version_changed:
+            what += " (version changed)"
+        rows.append(
+            f"| {_packages_cell(purls)} | {c.after.category} | {c.after.finding_id} | "
+            f"{what} | {c.before.status}({c.before.count}) → "
+            f"{c.after.status}({c.after.count}) |"
+        )
+    return _table(header, rows, len(groups), max_rows)
 
 
-def _change_table(changes: List[Change]) -> str:
-    header = "| Package | Category | Finding | Change | Before → After |\n|---|---|---|---|---|"
-    return "\n".join([header] + [_change_row(c) for c in changes])
+def _clip(body: str, limit: int = GITHUB_BODY_LIMIT) -> str:
+    """Last-resort guard so an oversized body never fails the `gh` call."""
+    if len(body) <= limit:
+        return body
+    notice = f"\n\n_Body truncated to fit GitHub's size limit._ {_FULL_LIST_NOTE}"
+    keep = body[: limit - len(notice)]
+    keep = keep[: keep.rfind("\n")] if "\n" in keep else keep
+    return keep + notice
 
 
 def render_summary(delta: Delta, manifest: str, first_run: bool = False,
@@ -101,9 +187,11 @@ def render_issue_body(delta: Delta, manifest: str, critical: bool,
 
     lines = [intro, "", f"Manifest: `{manifest}`", ""]
     if new:
-        lines += ["## New findings", "", _finding_table(new), ""]
+        lines += ["## New findings", "",
+                  _finding_table(new, MAX_ROWS_ISSUE), ""]
     if changed:
-        lines += ["## Worsened findings", "", _change_table(changed), ""]
+        lines += ["## Worsened findings", "",
+                  _change_table(changed, MAX_ROWS_ISSUE), ""]
     if run_url:
         lines += [f"[Workflow run]({run_url})", ""]
     lines += [
@@ -111,7 +199,7 @@ def render_issue_body(delta: Delta, manifest: str, critical: bool,
         "_Maintained by the rl-protect-monitor action. This issue is updated "
         "in place when new deltas appear; it will not be duplicated._",
     ]
-    return "\n".join(lines)
+    return _clip("\n".join(lines))
 
 
 def issue_title(manifest: str, critical: bool) -> str:

@@ -95,6 +95,45 @@ def test_resolved_only_is_not_alert(env):
     assert out["resolved-count"] == "1"
 
 
+def test_baseline_not_rewritten_when_findings_unchanged(env):
+    tmp_path, _ = env
+    baseline = tmp_path / ".rl-protect" / "baseline.json"
+    invoke(tmp_path, "report_baseline.json")
+    before = baseline.read_text()
+    invoke(tmp_path, "report_baseline.json")
+    # the `generated` stamp must not churn the file, or every scheduled scan
+    # commits and pushes an otherwise unchanged baseline
+    assert baseline.read_text() == before
+
+
+def test_baseline_order_is_independent_of_report_order(env):
+    tmp_path, _ = env
+    baseline = tmp_path / ".rl-protect" / "baseline.json"
+    invoke(tmp_path, "report_baseline.json")
+    before = baseline.read_text()
+
+    shuffled = json.loads((FIXTURES / "report_baseline.json").read_text())
+    shuffled["analysis"]["report"]["packages"].reverse()
+    shuffled_path = tmp_path / "shuffled.json"
+    shuffled_path.write_text(json.dumps(shuffled))
+    run([
+        "--report", str(shuffled_path),
+        "--baseline", str(baseline),
+        "--manifest", "package-lock.json",
+        "--out-dir", str(tmp_path / "out"),
+    ])
+    assert baseline.read_text() == before
+
+
+def test_baseline_rewritten_when_findings_change(env):
+    tmp_path, _ = env
+    baseline = tmp_path / ".rl-protect" / "baseline.json"
+    invoke(tmp_path, "report_baseline.json")
+    before = baseline.read_text()
+    invoke(tmp_path, "report_new_cve.json")
+    assert baseline.read_text() != before
+
+
 def test_alert_on_first_run_flag(env):
     tmp_path, gh_out = env
     invoke(tmp_path, "report_new_malware.json", extra=["--alert-on-first-run"])

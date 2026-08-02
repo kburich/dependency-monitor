@@ -10,10 +10,14 @@ The report shape (schema 1, see https://docs.secure.software/cli/rl-protect-sche
         analysis.vulnerabilities -> { "CVE-...": { summary, cvss.baseScore } },
     }
 
-A Finding is identified by (purl, category, finding_id). For vulnerabilities
-we use the per-CVE ids when present; for count-only categories the finding_id
-is the category name itself (status/count changes are then detected as
-"changed" by the diff, not as new identities).
+A Finding is identified by (base_purl, category, finding_id), where base_purl
+is the purl with its version stripped. Identity deliberately ignores the
+version: a lockfile bump re-keys every purl in the report, and a version-pinned
+identity would report the same CVE as one "resolved" plus one "new" finding --
+turning routine upgrades into mass alerts. For vulnerabilities we use the
+per-CVE ids when present; for count-only categories the finding_id is the
+category name itself (status/count changes are then detected as "changed" by
+the diff, not as new identities).
 """
 
 from __future__ import annotations
@@ -37,6 +41,24 @@ CRITICAL_CATEGORIES = frozenset({"malware", "tampering"})
 STATUS_RANK = {"warn": 1, "fail": 2}
 
 
+def split_purl(purl: str) -> Tuple[str, str]:
+    """Split a purl into (base, version). Returns version "" if unversioned.
+
+    Scoped npm names arrive percent-encoded ("pkg:npm/%40scope/name@1.2.3"),
+    so the only literal "@" is the version separator. Qualifiers ("?arch=x64")
+    and subpaths ("#sub") stay attached to the base.
+    """
+    head, sep, tail = purl.partition("?")
+    suffix = sep + tail
+    if not sep:
+        head, sep, tail = purl.partition("#")
+        suffix = sep + tail
+    base, at, version = head.rpartition("@")
+    if not at or "/" in version:
+        return purl, ""
+    return base + suffix, version
+
+
 def _normalize_status(raw: Any) -> str:
     s = str(raw or "pass").strip().lower()
     if s in ("warning", "warn"):
@@ -57,8 +79,17 @@ class Finding:
     score: Optional[float] = field(default=None, compare=False)
 
     @property
+    def base_purl(self) -> str:
+        """Purl with the version stripped — the version-stable package identity."""
+        return split_purl(self.purl)[0]
+
+    @property
+    def version(self) -> str:
+        return split_purl(self.purl)[1]
+
+    @property
     def key(self) -> Tuple[str, str, str]:
-        return (self.purl, self.category, self.finding_id)
+        return (self.base_purl, self.category, self.finding_id)
 
     @property
     def severity(self) -> str:
