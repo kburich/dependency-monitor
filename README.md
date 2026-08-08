@@ -141,3 +141,8 @@ Slack/SARIF/email notifiers · multi-manifest matrix · org-wide central mode.
 ## License
 
 MIT
+
+## Disclaimer
+
+Not an official ReversingLabs project. This is an independent action that
+calls the public `rl-protect` CLI.
