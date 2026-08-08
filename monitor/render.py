@@ -196,8 +196,9 @@ def render_issue_body(delta: Delta, manifest: str, critical: bool,
         lines += [f"[Workflow run]({run_url})", ""]
     lines += [
         "---",
-        "_Maintained by the rl-protect-monitor action. This issue is updated "
-        "in place when new deltas appear; it will not be duplicated._",
+        "_Maintained by the rl-protect-monitor action. This issue is not "
+        "duplicated: the body above always shows the latest delta, and every "
+        "delta — including earlier ones — is posted as a comment below._",
     ]
     return _clip("\n".join(lines))
 
