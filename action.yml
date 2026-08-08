@@ -1,4 +1,4 @@
-name: rl-protect-monitor
+name: Dependency malware & vulnerability monitor (rl-protect)
 description: >-
   Periodically re-scan your dependency manifest with ReversingLabs rl-protect
   and get notified (GitHub Issues) only when new malware, tampering, or
