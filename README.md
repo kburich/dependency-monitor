@@ -1,11 +1,5 @@
 # rl-protect-monitor
 
-<p align="center">
-  <img src="docs/banner.svg" alt="A developer sleeps peacefully while a friendly shield stands guard under a crescent moon" width="720">
-</p>
-
-<p align="center"><em>Sleep tight while we watch over your dependencies.</em></p>
-
 GitHub Action that periodically re-scans your dependency manifest with
 [ReversingLabs rl-protect](https://docs.secure.software/) and alerts you —
 via GitHub Issues — **only when something changes**: a new malware verdict,
@@ -57,8 +51,12 @@ commits it. Subsequent runs alert only on deltas:
 - **Vulnerabilities / secrets / licenses / hardening** → a separate,
   quieter rolling issue labeled `rl-protect-monitor`.
 
-Both issues are updated in place (with a notifying comment) instead of being
-duplicated. See [examples/](examples/) for the direct-action variant with
+Both issues roll rather than duplicate: each delta is posted as a comment
+(which notifies subscribers) and the issue body is updated to show the latest
+one. Consecutive deltas don't overlap — each is measured against the previous
+run's baseline — so the comment thread is the full history, while the body
+answers "what changed most recently?". See [examples/](examples/) for the
+direct-action variant with
 custom steps (e.g. Slack on malware).
 
 ## Inputs
@@ -143,3 +141,8 @@ Slack/SARIF/email notifiers · multi-manifest matrix · org-wide central mode.
 ## License
 
 MIT
+
+## Disclaimer
+
+Not an official ReversingLabs project. This is an independent action that
+calls the public `rl-protect` CLI.

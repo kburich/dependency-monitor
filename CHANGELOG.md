@@ -8,6 +8,34 @@ Consumers pin the floating major tag (`@v1`), which always points at the
 newest release in the `1.x` line. Pin an exact tag (`@v1.0.0`) if you need
 behaviour to stay frozen.
 
+## [1.2.0] - 2026-08-08
+
+No inputs, outputs, or baseline formats changed. Existing workflows upgrade
+without modification; the only visible difference is that the rolling issues
+gain a comment carrying the full delta.
+
+### Fixed
+
+- Each run's delta is posted as a comment on the rolling issue, not just
+  written over the body. Because a delta is measured against the baseline the
+  *previous* run wrote, consecutive deltas never overlap — so overwriting the
+  body discarded the earlier findings entirely, and the notifying comment
+  ("the issue body above has been updated") pointed at a body that no longer
+  contained what it had announced. Once the workflow artifact expired, the
+  only surviving copy was gone. The comment is now posted before the body
+  edit, so a failure between the two calls cannot lose a delta.
+
+### Changed
+
+- The issue footer states that the body shows the latest delta and that
+  earlier ones are in the comments, replacing wording that implied the body
+  accumulated.
+- Marketplace listing name is now "Dependency malware & vulnerability monitor
+  (rl-protect)" — the repository, and therefore every `uses:` reference, is
+  unchanged.
+- README drops the banner and tagline; the opening paragraph already stated
+  the same claim more precisely.
+
 ## [1.1.0] - 2026-08-02
 
 Hardening driven by a real pnpm workspace scan: 1237 findings across 64
@@ -72,6 +100,7 @@ Initial release.
 - `alert-on-first-run` for repositories that want the initial backlog
   reported rather than absorbed into the baseline.
 
-[Unreleased]: https://github.com/kburich/rl-protect-monitor/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/kburich/rl-protect-monitor/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/kburich/rl-protect-monitor/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/kburich/rl-protect-monitor/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/kburich/rl-protect-monitor/releases/tag/v1.0.0

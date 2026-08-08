@@ -1,9 +1,13 @@
 """Create or update the rolling notification issue via the `gh` CLI.
 
 One open issue per severity bucket (identified by label). On a new delta:
-  - if an open issue with the label exists, edit its body in place and add a
-    short comment (edits don't notify subscribers — the comment does);
+  - if an open issue with the label exists, post the delta as a comment and
+    edit the body to match (edits don't notify subscribers — the comment does);
   - otherwise create the issue.
+
+Each run's delta is reported relative to the baseline written by the previous
+run, so consecutive deltas do not overlap. The body therefore only ever shows
+the latest one; the comment thread is what preserves earlier deltas.
 
 Usage:
     python -m monitor.gh_issue \
@@ -76,13 +80,13 @@ def run(argv: Optional[List[str]] = None) -> int:
             capture=False)
         print(f"Created new issue labeled {marker_label}")
     else:
+        # Comment first: the body edit discards the previous delta, and a
+        # failure between the two calls must not lose it.
+        _gh(["issue", "comment", str(number), "--repo", args.repo,
+             "--body-file", str(args.body_file)], capture=False)
         _gh(["issue", "edit", str(number), "--repo", args.repo,
              "--title", title,
              "--body-file", str(args.body_file)], capture=False)
-        _gh(["issue", "comment", str(number), "--repo", args.repo,
-             "--body", "New findings detected by the scheduled rl-protect "
-                       "scan — the issue body above has been updated."],
-            capture=False)
         print(f"Updated existing issue #{number}")
     return 0
 
