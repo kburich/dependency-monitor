@@ -140,3 +140,13 @@ def test_alert_on_first_run_flag(env):
     out = outputs(gh_out)
     assert out["first-run"] == "true"
     assert out["has-critical-alerts"] == "true"
+
+
+def test_notice_mode_drops_the_comment_promise_from_the_body(env):
+    """The footer is written here, so the mode has to reach the renderer."""
+    tmp_path, gh_out = env
+    invoke(tmp_path, "report_new_malware.json",
+           extra=["--alert-on-first-run", "--issue-comment", "notice"])
+    body = Path(outputs(gh_out)["issue-critical-body"]).read_text()
+    assert "posted as a comment below" not in body
+    assert "the body above always shows the latest delta." in body

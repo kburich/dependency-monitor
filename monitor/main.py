@@ -103,6 +103,10 @@ def run(argv: Optional[List[str]] = None) -> int:
                         help="Directory for delta.json / markdown outputs")
     parser.add_argument("--alert-on-first-run", action="store_true",
                         help="Treat all findings as new when no baseline exists")
+    parser.add_argument("--issue-comment", choices=("delta", "notice"),
+                        default="delta",
+                        help="Whether the rolling issue's comments carry the "
+                        "delta; only the footer wording depends on it here")
     parser.add_argument("--run-url", default=os.environ.get("MONITOR_RUN_URL", ""),
                         help="Workflow run URL to link from issue bodies")
     parser.add_argument("--quota-note", default="",
@@ -144,7 +148,8 @@ def run(argv: Optional[List[str]] = None) -> int:
             continue
         body_path = args.out_dir / f"issue_{name}.md"
         body_path.write_text(render_issue_body(delta, manifest, critical,
-                                               run_url=args.run_url or None))
+                                               run_url=args.run_url or None,
+                                               delta_comments=args.issue_comment == "delta"))
         title_path = args.out_dir / f"issue_{name}.title"
         title_path.write_text(issue_title(manifest, critical))
         issue_files[name] = body_path

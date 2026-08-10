@@ -58,13 +58,14 @@ def outputs(tmp_path):
     return tmp_path
 
 
-def notify(monkeypatch, fake, outputs, labels=("rl-protect-monitor",)):
+def notify(monkeypatch, fake, outputs, labels=("rl-protect-monitor",), extra=()):
     monkeypatch.setattr(gh_issue.subprocess, "run", fake)
     argv = ["--repo", "owner/name",
             "--title-file", str(outputs / "issue.title"),
             "--body-file", str(outputs / "issue.md")]
     for label in labels:
         argv += ["--label", label]
+    argv += list(extra)
     assert gh_issue.run(argv) == 0
     return fake
 
@@ -95,10 +96,27 @@ class TestExistingIssue:
         fake = notify(monkeypatch, FakeGh(open_number=7), outputs)
         assert "create" not in fake.verbs()
 
+    def test_notice_mode_posts_a_one_liner_after_the_edit(self, monkeypatch,
+                                                          outputs):
+        """The notice points at the body, so the body must be current first."""
+        fake = notify(monkeypatch, FakeGh(open_number=7), outputs,
+                      extra=["--issue-comment", "notice"])
+        assert fake.verbs() == ["list", "edit", "comment"]
+        comment = fake.call("comment")
+        assert flag(comment, "--body") == gh_issue.NOTICE_COMMENT
+        assert "--body-file" not in comment
+        assert flag(fake.call("edit"), "--body-file") == str(outputs / "issue.md")
+
 
 class TestNoOpenIssue:
     def test_issue_is_created_without_a_comment(self, monkeypatch, outputs):
         fake = notify(monkeypatch, FakeGh(open_number=None), outputs)
+        assert fake.verbs() == ["list", "create"]
+
+    def test_creation_is_unaffected_by_notice_mode(self, monkeypatch, outputs):
+        """Creation already notifies; a notice on top would be noise."""
+        fake = notify(monkeypatch, FakeGh(open_number=None), outputs,
+                      extra=["--issue-comment", "notice"])
         assert fake.verbs() == ["list", "create"]
 
     def test_create_carries_every_label(self, monkeypatch, outputs):

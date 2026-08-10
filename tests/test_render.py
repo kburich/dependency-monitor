@@ -76,6 +76,19 @@ class TestTruncation:
         assert "truncated" not in body
 
 
+class TestFooter:
+    def test_comment_thread_is_promised_by_default(self):
+        body = render_issue_body(Delta(new=[cve("pkg:npm/a@1")]), "m", critical=False)
+        assert "posted as a comment below" in body
+
+    def test_comment_thread_is_not_promised_in_notice_mode(self):
+        """A thread of one-line notices holds no history to point readers at."""
+        body = render_issue_body(Delta(new=[cve("pkg:npm/a@1")]), "m",
+                                 critical=False, delta_comments=False)
+        assert "posted as a comment below" not in body
+        assert "the body above always shows the latest delta." in body
+
+
 class TestFormatting:
     @pytest.mark.parametrize("score,expected", [
         (5.300000190734863, "5.3"),

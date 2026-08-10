@@ -51,6 +51,12 @@ inputs:
     description: Label identifying the rolling notification issue
     required: false
     default: rl-protect-monitor
+  issue-comment:
+    description: >-
+      What each run posts on the rolling issue (delta | notice). "notice" is a
+      one-line ping pointing at the updated body.
+    required: false
+    default: delta
   alert-on-first-run:
     description: Alert on all findings when no baseline exists yet
     required: false
@@ -199,10 +205,16 @@ runs:
         BASELINE_FILE: ${{ steps.baseline.outputs.file }}
         MANIFEST: ${{ steps.manifest.outputs.path }}
         ALERT_ON_FIRST_RUN: ${{ inputs.alert-on-first-run }}
+        ISSUE_COMMENT: ${{ inputs.issue-comment }}
       run: |
         EXTRA=()
         if [[ "$ALERT_ON_FIRST_RUN" == "true" ]]; then
           EXTRA+=(--alert-on-first-run)
+        fi
+        # Only the exact opt-in switches modes: an unrecognised value must not
+        # fail the diff step, which also writes the baseline.
+        if [[ "$ISSUE_COMMENT" == "notice" ]]; then
+          EXTRA+=(--issue-comment notice)
         fi
         python -m monitor.main \
           --report "$REPORT_PATH" \
@@ -218,23 +230,30 @@ runs:
         GH_TOKEN: ${{ inputs.github-token }}
         PYTHONPATH: ${{ github.action_path }}
         ISSUE_LABEL: ${{ inputs.issue-label }}
+        ISSUE_COMMENT: ${{ inputs.issue-comment }}
         CRITICAL_BODY: ${{ steps.diff.outputs.issue-critical-body }}
         STANDARD_BODY: ${{ steps.diff.outputs.issue-standard-body }}
       run: |
         OUT="$RUNNER_TEMP/rl-protect-monitor-out"
+        EXTRA=()
+        if [[ "$ISSUE_COMMENT" == "notice" ]]; then
+          EXTRA+=(--issue-comment notice)
+        fi
         if [[ -n "$CRITICAL_BODY" ]]; then
           python -m monitor.gh_issue \
             --repo "$GITHUB_REPOSITORY" \
             --title-file "$OUT/issue_critical.title" \
             --body-file "$CRITICAL_BODY" \
-            --label "rl-protect-malware" --label "$ISSUE_LABEL"
+            --label "rl-protect-malware" --label "$ISSUE_LABEL" \
+            "${EXTRA[@]}"
         fi
         if [[ -n "$STANDARD_BODY" ]]; then
           python -m monitor.gh_issue \
             --repo "$GITHUB_REPOSITORY" \
             --title-file "$OUT/issue_standard.title" \
             --body-file "$STANDARD_BODY" \
-            --label "$ISSUE_LABEL"
+            --label "$ISSUE_LABEL" \
+            "${EXTRA[@]}"
         fi
 
     - name: Commit updated baseline

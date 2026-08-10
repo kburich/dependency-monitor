@@ -9,6 +9,10 @@ Each run's delta is reported relative to the baseline written by the previous
 run, so consecutive deltas do not overlap. The body therefore only ever shows
 the latest one; the comment thread is what preserves earlier deltas.
 
+`--issue-comment notice` posts a one-line ping instead, after the edit rather
+than before it (nothing durable is at stake). Quieter, but the delta then lives
+only in the body until the next run overwrites it.
+
 Usage:
     python -m monitor.gh_issue \
         --repo owner/name \
@@ -27,6 +31,9 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import List, Optional
+
+NOTICE_COMMENT = ("New findings detected by the scheduled rl-protect scan — "
+                  "the issue body above has been updated.")
 
 
 def _gh(args: List[str], capture: bool = True) -> str:
@@ -64,6 +71,10 @@ def run(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--label", action="append", required=True,
                         dest="labels", help="May be given multiple times; "
                         "the first label identifies the rolling issue")
+    parser.add_argument("--issue-comment", choices=("delta", "notice"),
+                        default="delta",
+                        help="What to post on an existing issue: the full "
+                        "delta (default) or a one-line notice")
     args = parser.parse_args(argv)
 
     title = args.title_file.read_text().strip()
@@ -80,13 +91,20 @@ def run(argv: Optional[List[str]] = None) -> int:
             capture=False)
         print(f"Created new issue labeled {marker_label}")
     else:
-        # Comment first: the body edit discards the previous delta, and a
-        # failure between the two calls must not lose it.
-        _gh(["issue", "comment", str(number), "--repo", args.repo,
-             "--body-file", str(args.body_file)], capture=False)
-        _gh(["issue", "edit", str(number), "--repo", args.repo,
-             "--title", title,
-             "--body-file", str(args.body_file)], capture=False)
+        edit = ["issue", "edit", str(number), "--repo", args.repo,
+                "--title", title, "--body-file", str(args.body_file)]
+        if args.issue_comment == "delta":
+            # Comment first: the body edit discards the previous delta, and a
+            # failure between the two calls must not lose it.
+            _gh(["issue", "comment", str(number), "--repo", args.repo,
+                 "--body-file", str(args.body_file)], capture=False)
+            _gh(edit, capture=False)
+        else:
+            # The notice points at the body, so the body has to be current
+            # first. It carries no delta of its own to lose.
+            _gh(edit, capture=False)
+            _gh(["issue", "comment", str(number), "--repo", args.repo,
+                 "--body", NOTICE_COMMENT], capture=False)
         print(f"Updated existing issue #{number}")
     return 0
 

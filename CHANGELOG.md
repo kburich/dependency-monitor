@@ -8,6 +8,22 @@ Consumers pin the floating major tag (`@v1`), which always points at the
 newest release in the `1.x` line. Pin an exact tag (`@v1.0.0`) if you need
 behaviour to stay frozen.
 
+## [1.3.0] - 2026-08-10
+
+One new optional input; outputs and baseline format are unchanged. The default
+(`true`) is exactly the 1.2.0 behaviour, so existing workflows upgrade without
+modification.
+
+### Added
+
+- `issue-comment` (`delta` | `notice`, default `delta`) selects what each run
+  posts on the rolling issue. `delta` is the 1.2.0 behaviour: the full findings
+  in the comment, posted before the body edit. `notice` restores the pre-1.2.0
+  one-liner ("the issue body above has been updated"), posted *after* the edit
+  so it points at current content — quieter, at the cost of the comment thread
+  no longer preserving earlier deltas. The issue footer stops advertising that
+  history in `notice` mode.
+
 ## [1.2.0] - 2026-08-08
 
 No inputs, outputs, or baseline formats changed. Existing workflows upgrade
@@ -100,7 +116,8 @@ Initial release.
 - `alert-on-first-run` for repositories that want the initial backlog
   reported rather than absorbed into the baseline.
 
-[Unreleased]: https://github.com/kburich/rl-protect-monitor/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/kburich/rl-protect-monitor/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/kburich/rl-protect-monitor/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/kburich/rl-protect-monitor/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/kburich/rl-protect-monitor/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/kburich/rl-protect-monitor/releases/tag/v1.0.0

@@ -55,7 +55,10 @@ Both issues roll rather than duplicate: each delta is posted as a comment
 (which notifies subscribers) and the issue body is updated to show the latest
 one. Consecutive deltas don't overlap — each is measured against the previous
 run's baseline — so the comment thread is the full history, while the body
-answers "what changed most recently?". See [examples/](examples/) for the
+answers "what changed most recently?". Set `issue-comment: notice` for a
+one-line ping instead of the full delta — quieter in the inbox, but the delta
+then survives only in the body until the next run overwrites it (and in that
+run's `delta.json` artifact). See [examples/](examples/) for the
 direct-action variant with
 custom steps (e.g. Slack on malware).
 
@@ -72,6 +75,7 @@ custom steps (e.g. Slack on malware).
 | `commit-baseline` | `true` | Commit + push the updated baseline |
 | `notify` | `issue` | `issue` / `none` (job summary is always written) |
 | `issue-label` | `rl-protect-monitor` | Label of the rolling issue |
+| `issue-comment` | `delta` | What each run posts on the rolling issue: `delta` (the full findings) or `notice` (a one-line ping at the updated body) |
 | `alert-on-first-run` | `false` | Alert on all findings when no baseline exists |
 | `fail-on` | `never` | `never` / `critical` / `any-new`. A monitor should not gate — evaluated *after* notifications and baseline commit |
 | `heartbeat-url` | — | Ping URL (e.g. healthchecks.io) hit after each successful run |

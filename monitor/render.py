@@ -169,8 +169,14 @@ def render_summary(delta: Delta, manifest: str, first_run: bool = False,
 
 
 def render_issue_body(delta: Delta, manifest: str, critical: bool,
-                      run_url: Optional[str] = None) -> str:
-    """Markdown body for the rolling GitHub issue (one per severity bucket)."""
+                      run_url: Optional[str] = None,
+                      delta_comments: bool = True) -> str:
+    """Markdown body for the rolling GitHub issue (one per severity bucket).
+
+    `delta_comments` says whether each run's delta is posted as a comment; with
+    a one-line notice instead, the footer must not point at the comment thread
+    for history it doesn't hold.
+    """
     if critical:
         new, changed = delta.new_critical, delta.changed_critical
         intro = (
@@ -194,12 +200,14 @@ def render_issue_body(delta: Delta, manifest: str, critical: bool,
                   _change_table(changed, MAX_ROWS_ISSUE), ""]
     if run_url:
         lines += [f"[Workflow run]({run_url})", ""]
-    lines += [
-        "---",
-        "_Maintained by the rl-protect-monitor action. This issue is not "
-        "duplicated: the body above always shows the latest delta, and every "
-        "delta — including earlier ones — is posted as a comment below._",
-    ]
+    footer = ("_Maintained by the rl-protect-monitor action. This issue is not "
+              "duplicated: the body above always shows the latest delta")
+    if delta_comments:
+        footer += (", and every delta — including earlier ones — is posted as "
+                   "a comment below._")
+    else:
+        footer += "._"
+    lines += ["---", footer]
     return _clip("\n".join(lines))
 
 
