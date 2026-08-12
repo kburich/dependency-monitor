@@ -138,10 +138,6 @@ python -m monitor.main \
   --baseline /tmp/baseline.json --manifest package-lock.json --out-dir /tmp/out
 ```
 
-## Roadmap
-
-Slack/SARIF/email notifiers · multi-manifest matrix · org-wide central mode.
-
 ## License
 
 MIT
