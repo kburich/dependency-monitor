@@ -1,4 +1,4 @@
-"""Render a Delta into Markdown: job summary + GitHub issue bodies.
+"""Render a Delta into Markdown: job summary, issue bodies, delta comments.
 
 Real reports are large and highly repetitive: a single Go-based npm package
 ships ~20 per-platform variants that each carry the same stdlib CVEs, so 58
@@ -168,14 +168,26 @@ def render_summary(delta: Delta, manifest: str, first_run: bool = False,
     return "\n".join(lines)
 
 
+def _delta_headline(new_count: int, changed_count: int) -> str:
+    parts = []
+    if new_count:
+        parts.append(f"{new_count} new")
+    if changed_count:
+        parts.append(f"{changed_count} worsened")
+    return " · ".join(parts) or "no changes"
+
+
 def render_issue_body(delta: Delta, manifest: str, critical: bool,
                       run_url: Optional[str] = None,
-                      delta_comments: bool = True) -> str:
+                      stats: Optional[Dict] = None,
+                      outstanding: Optional[int] = None,
+                      date: str = "") -> str:
     """Markdown body for the rolling GitHub issue (one per severity bucket).
 
-    `delta_comments` says whether each run's delta is posted as a comment; with
-    a one-line notice instead, the footer must not point at the comment thread
-    for history it doesn't hold.
+    The body is the issue's landing page: cumulative monitoring stats and a
+    pointer at the newest comment, which carries the latest delta. The delta
+    itself is deliberately not repeated here — the comment is its durable,
+    notifying copy.
     """
     if critical:
         new, changed = delta.new_critical, delta.changed_critical
@@ -192,22 +204,69 @@ def render_issue_body(delta: Delta, manifest: str, critical: bool,
         )
 
     lines = [intro, "", f"Manifest: `{manifest}`", ""]
-    if new:
-        lines += ["## New findings", "",
-                  _finding_table(new, MAX_ROWS_ISSUE), ""]
-    if changed:
-        lines += ["## Worsened findings", "",
-                  _change_table(changed, MAX_ROWS_ISSUE), ""]
+
+    if stats:
+        bucket = stats.get("critical" if critical else "standard") or {}
+        since = str(stats.get("since") or "")[:10]
+        lines += ["### Monitoring stats", ""]
+        if since:
+            lines.append(f"- **Monitoring since:** {since}")
+        lines += [
+            f"- **Runs with alerts:** {bucket.get('runs', 0)}",
+            f"- **Alerted so far:** {bucket.get('new', 0)} new · "
+            f"{bucket.get('changed', 0)} worsened",
+            f"- **Resolved since then:** {bucket.get('resolved', 0)}",
+        ]
+        if outstanding is not None:
+            lines.append(f"- **Currently outstanding:** {outstanding}")
+        lines.append("")
+
+    latest = f"**Latest change{f' ({date})' if date else ''}:** " \
+             f"{_delta_headline(len(new), len(changed))} — the full delta is " \
+             "in the newest comment below."
+    lines += [latest, ""]
+
     if run_url:
         lines += [f"[Workflow run]({run_url})", ""]
     footer = ("_Maintained by the rl-protect-monitor action. This issue is not "
-              "duplicated: the body above always shows the latest delta")
-    if delta_comments:
-        footer += (", and every delta — including earlier ones — is posted as "
-                   "a comment below._")
-    else:
-        footer += "._"
+              "duplicated: every delta — including earlier ones — is posted as "
+              "a comment below, and the body above tracks the cumulative "
+              "picture._")
     lines += ["---", footer]
+    return _clip("\n".join(lines))
+
+
+def render_issue_comment(delta: Delta, critical: bool,
+                         run_url: Optional[str] = None,
+                         date: str = "") -> str:
+    """Markdown for the delta comment on the rolling issue.
+
+    The headline stays visible when the comment is collapsed; the tables sit
+    inside a <details> block so a long thread scans like a changelog. Most
+    email clients ignore <details>, so the notification email still shows the
+    full delta expanded.
+    """
+    if critical:
+        new, changed = delta.new_critical, delta.changed_critical
+        label = "🚨 Malware/tampering"
+    else:
+        new, changed = delta.new_standard, delta.changed_standard
+        label = "New findings"
+
+    head = f"**{label}: {_delta_headline(len(new), len(changed))}**"
+    if date:
+        head += f" — {date}"
+    if run_url:
+        head += f" · [workflow run]({run_url})"
+
+    lines = [head, "", "<details>", "<summary>Show the full delta</summary>", ""]
+    if new:
+        lines += ["### New findings", "",
+                  _finding_table(new, MAX_ROWS_ISSUE), ""]
+    if changed:
+        lines += ["### Worsened findings", "",
+                  _change_table(changed, MAX_ROWS_ISSUE), ""]
+    lines += ["</details>"]
     return _clip("\n".join(lines))
 
 

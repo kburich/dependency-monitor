@@ -1,23 +1,24 @@
 """Create or update the rolling notification issue via the `gh` CLI.
 
-One open issue per severity bucket (identified by label). On a new delta:
-  - if an open issue with the label exists, post the delta as a comment and
-    edit the body to match (edits don't notify subscribers — the comment does);
-  - otherwise create the issue.
+One open issue per severity bucket (identified by label). The body is the
+issue's landing page — cumulative stats, edited to current on every alert —
+while each run's delta is posted as a comment (comments notify subscribers;
+body edits do not). Each delta is measured against the baseline the previous
+run wrote, so consecutive deltas never overlap: the comment is the only
+durable copy of its delta.
 
-Each run's delta is reported relative to the baseline written by the previous
-run, so consecutive deltas do not overlap. The body therefore only ever shows
-the latest one; the comment thread is what preserves earlier deltas.
-
-`--issue-comment notice` posts a one-line ping instead, after the edit rather
-than before it (nothing durable is at stake). Quieter, but the delta then lives
-only in the body until the next run overwrites it.
+On a new delta:
+  - existing open issue: post the delta comment first, then edit the body —
+    a failure between the two calls must not lose the delta;
+  - no open issue: create it (creation itself notifies, with the body), then
+    post the delta comment so the thread holds the delta the body points at.
 
 Usage:
     python -m monitor.gh_issue \
         --repo owner/name \
         --title-file out/issue_critical.title \
         --body-file out/issue_critical.md \
+        --comment-file out/issue_critical_comment.md \
         --label rl-protect-monitor --label rl-protect-malware
 
 Requires GH_TOKEN in the environment with `issues: write`.
@@ -31,9 +32,6 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import List, Optional
-
-NOTICE_COMMENT = ("New findings detected by the scheduled rl-protect scan — "
-                  "the issue body above has been updated.")
 
 
 def _gh(args: List[str], capture: bool = True) -> str:
@@ -67,44 +65,47 @@ def run(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="rl-protect-monitor-notify")
     parser.add_argument("--repo", required=True)
     parser.add_argument("--title-file", required=True, type=Path)
-    parser.add_argument("--body-file", required=True, type=Path)
+    parser.add_argument("--body-file", required=True, type=Path,
+                        help="Issue body: cumulative stats landing page")
+    parser.add_argument("--comment-file", type=Path, default=None,
+                        help="Delta comment; defaults to --body-file")
     parser.add_argument("--label", action="append", required=True,
                         dest="labels", help="May be given multiple times; "
                         "the first label identifies the rolling issue")
-    parser.add_argument("--issue-comment", choices=("delta", "notice"),
-                        default="delta",
-                        help="What to post on an existing issue: the full "
-                        "delta (default) or a one-line notice")
     args = parser.parse_args(argv)
 
     title = args.title_file.read_text().strip()
+    comment_file = args.comment_file or args.body_file
     marker_label = args.labels[0]
 
     _ensure_labels(args.repo, args.labels)
     number = _find_open_issue(args.repo, marker_label)
 
     if number is None:
-        _gh(["issue", "create", "--repo", args.repo,
-             "--title", title,
-             "--body-file", str(args.body_file)]
-            + [arg for label in args.labels for arg in ("--label", label)],
-            capture=False)
+        out = _gh(["issue", "create", "--repo", args.repo,
+                   "--title", title,
+                   "--body-file", str(args.body_file)]
+                  + [arg for label in args.labels for arg in ("--label", label)])
         print(f"Created new issue labeled {marker_label}")
-    else:
-        edit = ["issue", "edit", str(number), "--repo", args.repo,
-                "--title", title, "--body-file", str(args.body_file)]
-        if args.issue_comment == "delta":
-            # Comment first: the body edit discards the previous delta, and a
-            # failure between the two calls must not lose it.
-            _gh(["issue", "comment", str(number), "--repo", args.repo,
-                 "--body-file", str(args.body_file)], capture=False)
-            _gh(edit, capture=False)
+        # `gh issue create` prints the new issue's URL; the delta comment
+        # needs its number. Creation already notified with the body, so a
+        # parse failure costs only the comment, not the alert.
+        tail = out.strip().rsplit("/", 1)[-1] if out.strip() else ""
+        if tail.isdigit():
+            _gh(["issue", "comment", tail, "--repo", args.repo,
+                 "--body-file", str(comment_file)], capture=False)
         else:
-            # The notice points at the body, so the body has to be current
-            # first. It carries no delta of its own to lose.
-            _gh(edit, capture=False)
-            _gh(["issue", "comment", str(number), "--repo", args.repo,
-                 "--body", NOTICE_COMMENT], capture=False)
+            print("Could not parse the new issue's number from `gh issue "
+                  "create` output — delta comment skipped", file=sys.stderr)
+    else:
+        # Comment first: the body edit replaces the stats snapshot, but the
+        # delta exists only here — a failure between the two calls must not
+        # lose it.
+        _gh(["issue", "comment", str(number), "--repo", args.repo,
+             "--body-file", str(comment_file)], capture=False)
+        _gh(["issue", "edit", str(number), "--repo", args.repo,
+             "--title", title, "--body-file", str(args.body_file)],
+            capture=False)
         print(f"Updated existing issue #{number}")
     return 0
 

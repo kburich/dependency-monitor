@@ -52,9 +52,15 @@ def test_second_run_detects_new_malware(env):
     assert out["first-run"] == "false"
     assert out["has-critical-alerts"] == "true"
     assert out["new-critical-count"] == "1"
+    # the delta lives in the comment; the body is the stats landing page
+    comment = Path(out["issue-critical-comment"]).read_text()
+    assert "ua-parser-js" in comment
+    assert "malware" in comment
+    assert "<details>" in comment
     critical_body = Path(out["issue-critical-body"]).read_text()
-    assert "ua-parser-js" in critical_body
-    assert "malware" in critical_body
+    assert "ua-parser-js" not in critical_body
+    assert "newest comment below" in critical_body
+    assert "**Runs with alerts:** 1" in critical_body
     title = (tmp_path / "out" / "issue_critical.title").read_text()
     assert title.startswith("🚨")
     # baseline updated to include the malware finding
@@ -71,6 +77,8 @@ def test_no_change_produces_no_issue_bodies(env):
     assert out["has-alerts"] == "false"
     assert out["issue-critical-body"] == ""
     assert out["issue-standard-body"] == ""
+    assert out["issue-critical-comment"] == ""
+    assert out["issue-standard-comment"] == ""
 
 
 def test_new_cve_goes_to_standard_issue(env):
@@ -82,7 +90,9 @@ def test_new_cve_goes_to_standard_issue(env):
     assert out["has-alerts"] == "true"
     assert out["has-critical-alerts"] == "false"
     assert out["issue-critical-body"] == ""
-    assert "CVE-2022-25927" in Path(out["issue-standard-body"]).read_text()
+    assert out["issue-critical-comment"] == ""
+    assert "CVE-2022-25927" in Path(out["issue-standard-comment"]).read_text()
+    assert "CVE-2022-25927" not in Path(out["issue-standard-body"]).read_text()
 
 
 def test_resolved_only_is_not_alert(env):
@@ -142,11 +152,50 @@ def test_alert_on_first_run_flag(env):
     assert out["has-critical-alerts"] == "true"
 
 
-def test_notice_mode_drops_the_comment_promise_from_the_body(env):
-    """The footer is written here, so the mode has to reach the renderer."""
-    tmp_path, gh_out = env
-    invoke(tmp_path, "report_new_malware.json",
-           extra=["--alert-on-first-run", "--issue-comment", "notice"])
-    body = Path(outputs(gh_out)["issue-critical-body"]).read_text()
-    assert "posted as a comment below" not in body
-    assert "the body above always shows the latest delta." in body
+def baseline_stats(tmp_path):
+    return json.loads(
+        (tmp_path / ".rl-protect" / "baseline.json").read_text())["stats"]
+
+
+def test_first_run_absorbs_backlog_without_counting_it(env):
+    """Stats count alerts since monitoring started, not the standing backlog."""
+    tmp_path, _ = env
+    invoke(tmp_path, "report_baseline.json")
+    stats = baseline_stats(tmp_path)
+    assert stats["standard"] == {"runs": 0, "new": 0, "changed": 0, "resolved": 0}
+    assert stats["since"]
+
+
+def test_stats_accumulate_across_runs(env):
+    tmp_path, _ = env
+    invoke(tmp_path, "report_baseline.json")
+    since = baseline_stats(tmp_path)["since"]
+
+    invoke(tmp_path, "report_new_malware.json")
+    stats = baseline_stats(tmp_path)
+    assert stats["critical"]["new"] == 1
+    assert stats["critical"]["runs"] == 1
+
+    # malware gone again, a CVE appears: resolved and new both accumulate
+    invoke(tmp_path, "report_new_cve.json")
+    stats = baseline_stats(tmp_path)
+    assert stats["critical"] == {"runs": 1, "new": 1, "changed": 0, "resolved": 1}
+    assert stats["standard"]["new"] == 1
+    assert stats["standard"]["runs"] == 1
+    assert stats["since"] == since
+
+
+def test_pre_stats_baseline_adopts_stats_once(env):
+    """A 1.x baseline without stats gets exactly one adoption rewrite."""
+    tmp_path, _ = env
+    baseline = tmp_path / ".rl-protect" / "baseline.json"
+    invoke(tmp_path, "report_baseline.json")
+    data = json.loads(baseline.read_text())
+    del data["stats"]
+    baseline.write_text(json.dumps(data))
+
+    invoke(tmp_path, "report_baseline.json")
+    assert "stats" in json.loads(baseline.read_text())
+    before = baseline.read_text()
+    invoke(tmp_path, "report_baseline.json")
+    assert baseline.read_text() == before

@@ -2,9 +2,10 @@
 
 `subprocess.run` is faked, so these assert the arguments the module *builds*,
 not that `gh` accepts them. That is enough for the invariant worth protecting:
-each run's delta is measured against the previous run's baseline, so a body
-edit discards the earlier delta outright — the comment is the only durable
-copy, and it must be posted first.
+each run's delta is measured against the previous run's baseline and lives
+only in its comment — so on an existing issue the comment must be posted
+before the body edit, and a newly created issue must get the delta comment
+its stats body points at.
 """
 
 import json
@@ -13,6 +14,8 @@ import subprocess
 import pytest
 
 from monitor import gh_issue
+
+CREATED_URL = "https://github.com/owner/name/issues/9"
 
 
 class FakeGh:
@@ -28,6 +31,8 @@ class FakeGh:
         if cmd[:3] == ["gh", "issue", "list"]:
             found = [] if self.open_number is None else [{"number": self.open_number}]
             stdout = json.dumps(found)
+        elif cmd[:3] == ["gh", "issue", "create"]:
+            stdout = CREATED_URL + "\n"
         return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
 
     def issue_calls(self):
@@ -53,19 +58,25 @@ def outputs(tmp_path):
         "🚨 Malware/tampering detected in dependencies (package-lock.json)\n")
     (tmp_path / "issue.md").write_text(
         "rl-protect flagged **malware or tampering**.\n\n"
+        "### Monitoring stats\n\n- **Runs with alerts:** 3\n")
+    (tmp_path / "issue_comment.md").write_text(
+        "**🚨 Malware/tampering: 1 new**\n\n<details>\n"
+        "<summary>Show the full delta</summary>\n\n"
         "| Packages | Category | Finding |\n|---|---|---|\n"
-        "| `pkg:npm/left-pad@1.3.0` | malware | MAL-2026-1 |\n")
+        "| `pkg:npm/left-pad@1.3.0` | malware | MAL-2026-1 |\n\n</details>\n")
     return tmp_path
 
 
-def notify(monkeypatch, fake, outputs, labels=("rl-protect-monitor",), extra=()):
+def notify(monkeypatch, fake, outputs, labels=("rl-protect-monitor",),
+           comment_file=True):
     monkeypatch.setattr(gh_issue.subprocess, "run", fake)
     argv = ["--repo", "owner/name",
             "--title-file", str(outputs / "issue.title"),
             "--body-file", str(outputs / "issue.md")]
+    if comment_file:
+        argv += ["--comment-file", str(outputs / "issue_comment.md")]
     for label in labels:
         argv += ["--label", label]
-    argv += list(extra)
     assert gh_issue.run(argv) == 0
     return fake
 
@@ -77,11 +88,10 @@ class TestExistingIssue:
         verbs = fake.verbs()
         assert verbs.index("comment") < verbs.index("edit")
 
-    def test_comment_carries_the_delta_body(self, monkeypatch, outputs):
-        """A static one-liner here would leave the delta nowhere durable."""
+    def test_comment_carries_the_delta_file(self, monkeypatch, outputs):
         fake = notify(monkeypatch, FakeGh(open_number=7), outputs)
         comment = fake.call("comment")
-        assert flag(comment, "--body-file") == str(outputs / "issue.md")
+        assert flag(comment, "--body-file") == str(outputs / "issue_comment.md")
         assert "--body" not in comment
 
     def test_edit_targets_the_open_issue_with_body_and_title(self, monkeypatch,
@@ -96,28 +106,23 @@ class TestExistingIssue:
         fake = notify(monkeypatch, FakeGh(open_number=7), outputs)
         assert "create" not in fake.verbs()
 
-    def test_notice_mode_posts_a_one_liner_after_the_edit(self, monkeypatch,
-                                                          outputs):
-        """The notice points at the body, so the body must be current first."""
+    def test_comment_falls_back_to_the_body_file(self, monkeypatch, outputs):
+        """Without --comment-file the delta must still land somewhere durable."""
         fake = notify(monkeypatch, FakeGh(open_number=7), outputs,
-                      extra=["--issue-comment", "notice"])
-        assert fake.verbs() == ["list", "edit", "comment"]
+                      comment_file=False)
         comment = fake.call("comment")
-        assert flag(comment, "--body") == gh_issue.NOTICE_COMMENT
-        assert "--body-file" not in comment
-        assert flag(fake.call("edit"), "--body-file") == str(outputs / "issue.md")
+        assert flag(comment, "--body-file") == str(outputs / "issue.md")
 
 
 class TestNoOpenIssue:
-    def test_issue_is_created_without_a_comment(self, monkeypatch, outputs):
+    def test_creation_is_followed_by_the_delta_comment(self, monkeypatch,
+                                                       outputs):
+        """The stats body points at the newest comment — it has to exist."""
         fake = notify(monkeypatch, FakeGh(open_number=None), outputs)
-        assert fake.verbs() == ["list", "create"]
-
-    def test_creation_is_unaffected_by_notice_mode(self, monkeypatch, outputs):
-        """Creation already notifies; a notice on top would be noise."""
-        fake = notify(monkeypatch, FakeGh(open_number=None), outputs,
-                      extra=["--issue-comment", "notice"])
-        assert fake.verbs() == ["list", "create"]
+        assert fake.verbs() == ["list", "create", "comment"]
+        comment = fake.call("comment")
+        assert comment[3] == "9"  # parsed from the URL `gh issue create` printed
+        assert flag(comment, "--body-file") == str(outputs / "issue_comment.md")
 
     def test_create_carries_every_label(self, monkeypatch, outputs):
         fake = notify(monkeypatch, FakeGh(open_number=None), outputs,

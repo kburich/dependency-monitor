@@ -64,6 +64,14 @@ class Delta:
         return [c for c in self.changed if c.after.severity == "standard"]
 
     @property
+    def resolved_critical(self) -> List[Finding]:
+        return [f for f in self.resolved if f.severity == "critical"]
+
+    @property
+    def resolved_standard(self) -> List[Finding]:
+        return [f for f in self.resolved if f.severity == "standard"]
+
+    @property
     def has_alerts(self) -> bool:
         return bool(self.new or self.changed)
 

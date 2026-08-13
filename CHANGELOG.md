@@ -8,21 +8,35 @@ Consumers pin the floating major tag (`@v1`), which always points at the
 newest release in the `1.x` line. Pin an exact tag (`@v1.0.0`) if you need
 behaviour to stay frozen.
 
-## [1.3.0] - 2026-08-10
+## [1.3.0] - 2026-08-12
 
-One new optional input; outputs and baseline format are unchanged. The default
-(`true`) is exactly the 1.2.0 behaviour, so existing workflows upgrade without
-modification.
+The rolling issues change shape: the body becomes a cumulative-stats landing
+page and each delta lives in a collapsible comment, so the latest delta is no
+longer shown twice. No inputs or outputs changed; existing workflows upgrade
+without modification. Expect one extra baseline commit on the first run after
+upgrading, when the baseline adopts its `stats` block.
+
+### Changed
+
+- The issue body no longer repeats the latest delta. It now shows cumulative
+  monitoring stats — monitoring since, runs with alerts, findings alerted /
+  worsened / resolved, currently outstanding — plus a one-line "latest
+  change" headline pointing at the newest comment, which carries the delta.
+- Delta comments collapse: a visible headline ("New findings: 2 new · 1
+  worsened — 2026-08-12") with the tables inside a `<details>` block, so a
+  long thread scans like a changelog. Notification emails are unaffected:
+  most mail clients ignore `<details>` and render the full delta.
+- Creating a rolling issue now also posts the first delta comment, so the
+  body's pointer at the newest comment holds from the issue's first minute
+  (at the cost of a second notification on that first alert).
 
 ### Added
 
-- `issue-comment` (`delta` | `notice`, default `delta`) selects what each run
-  posts on the rolling issue. `delta` is the 1.2.0 behaviour: the full findings
-  in the comment, posted before the body edit. `notice` restores the pre-1.2.0
-  one-liner ("the issue body above has been updated"), posted *after* the edit
-  so it points at current content — quieter, at the cost of the comment thread
-  no longer preserving earlier deltas. The issue footer stops advertising that
-  history in `notice` mode.
+- Cumulative counters in the baseline (`stats` block), kept per severity
+  bucket and counting only alerts since monitoring started — the backlog
+  absorbed on the first run is not counted. They move only when findings
+  change, so the "no commit churn on quiet runs" guarantee from 1.1.0 holds.
+  Deleting or regenerating the baseline resets them.
 
 ## [1.2.0] - 2026-08-08
 

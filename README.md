@@ -51,16 +51,17 @@ commits it. Subsequent runs alert only on deltas:
 - **Vulnerabilities / secrets / licenses / hardening** → a separate,
   quieter rolling issue labeled `rl-protect-monitor`.
 
-Both issues roll rather than duplicate: each delta is posted as a comment
-(which notifies subscribers) and the issue body is updated to show the latest
-one. Consecutive deltas don't overlap — each is measured against the previous
-run's baseline — so the comment thread is the full history, while the body
-answers "what changed most recently?". Set `issue-comment: notice` for a
-one-line ping instead of the full delta — quieter in the inbox, but the delta
-then survives only in the body until the next run overwrites it (and in that
-run's `delta.json` artifact). See [examples/](examples/) for the
-direct-action variant with
-custom steps (e.g. Slack on malware).
+Both issues roll rather than duplicate: each delta is posted as a collapsible
+comment — a visible one-line headline with the tables tucked into a
+`<details>` block, so the thread scans like a changelog. Comments are what
+notify subscribers, and most email clients ignore `<details>`, so the
+notification email still shows the full delta. The issue body is the landing
+page: cumulative stats (monitoring since, runs with alerts, findings
+alerted/resolved, currently outstanding) and a pointer at the newest comment.
+Consecutive deltas don't overlap — each is measured against the previous
+run's baseline — so the comment thread is the complete history. See
+[examples/](examples/) for the direct-action variant with custom steps
+(e.g. Slack on malware).
 
 ## Inputs
 
@@ -75,7 +76,6 @@ custom steps (e.g. Slack on malware).
 | `commit-baseline` | `true` | Commit + push the updated baseline |
 | `notify` | `issue` | `issue` / `none` (job summary is always written) |
 | `issue-label` | `rl-protect-monitor` | Label of the rolling issue |
-| `issue-comment` | `delta` | What each run posts on the rolling issue: `delta` (the full findings) or `notice` (a one-line ping at the updated body) |
 | `alert-on-first-run` | `false` | Alert on all findings when no baseline exists |
 | `fail-on` | `never` | `never` / `critical` / `any-new`. A monitor should not gate — evaluated *after* notifications and baseline commit |
 | `heartbeat-url` | — | Ping URL (e.g. healthchecks.io) hit after each successful run |
@@ -114,10 +114,14 @@ machine-readable delta).
   silent. Without that, one lockfile bump of a package like `esbuild` — which
   ships ~20 per-platform variants, each carrying the same Go stdlib CVEs —
   would report ~800 findings as resolved and ~800 as new.
-- **Alerts are grouped and capped**: the issue body groups one row per
-  finding (listing the affected packages) and caps the table, since a real
+- **Alerts are grouped and capped**: the delta comments group one row per
+  finding (listing the affected packages) and cap the table, since a real
   scan can produce 1200+ findings from 58 distinct CVEs. The complete,
   ungrouped delta is always in the `delta.json` workflow artifact.
+- **Stats live in the baseline**: the cumulative counters shown on the issue
+  body are stored in the baseline's `stats` block and only count alerts since
+  monitoring started — the backlog absorbed on the first run isn't counted.
+  Deleting or regenerating the baseline resets them.
 
 ## Development
 

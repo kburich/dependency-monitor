@@ -21,22 +21,63 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from .diff import Delta, diff
 from .normalize import Finding, normalize, scan_metadata
-from .render import issue_title, render_issue_body, render_summary
+from .render import (issue_title, render_issue_body, render_issue_comment,
+                     render_summary)
 
 BASELINE_SCHEMA = 1
 
 
-def load_baseline(path: Path) -> Optional[List[Finding]]:
-    """Return baseline findings, or None if no baseline exists yet."""
+def load_baseline(path: Path) -> Tuple[Optional[List[Finding]], Dict]:
+    """Return (findings, stats). Findings is None if no baseline exists yet."""
     if not path.exists():
-        return None
+        return None, {}
     with open(path) as fh:
         data = json.load(fh)
-    return [Finding.from_dict(d) for d in data.get("findings", [])]
+    findings = [Finding.from_dict(d) for d in data.get("findings", [])]
+    stats = data.get("stats")
+    return findings, stats if isinstance(stats, dict) else {}
+
+
+def _bucket(raw) -> Dict[str, int]:
+    raw = raw if isinstance(raw, dict) else {}
+    return {k: int(raw.get(k) or 0) for k in ("runs", "new", "changed", "resolved")}
+
+
+def update_stats(previous: Dict, delta: Delta, now: str) -> Dict:
+    """Fold this run's delta into the cumulative counters kept in the baseline.
+
+    The counters cover alerts *since monitoring started*: a backlog absorbed
+    silently on the first run is deliberately not counted. `since` is set the
+    first time stats are written and preserved afterwards.
+    """
+    stats = {
+        "since": str(previous.get("since") or now),
+        "critical": _bucket(previous.get("critical")),
+        "standard": _bucket(previous.get("standard")),
+    }
+    for name, new, changed, resolved in (
+        ("critical", delta.new_critical, delta.changed_critical,
+         delta.resolved_critical),
+        ("standard", delta.new_standard, delta.changed_standard,
+         delta.resolved_standard),
+    ):
+        bucket = stats[name]
+        if new or changed:
+            bucket["runs"] += 1
+        bucket["new"] += len(new)
+        bucket["changed"] += len(changed)
+        bucket["resolved"] += len(resolved)
+    return stats
+
+
+def _outstanding(findings: List[Finding], critical: bool) -> int:
+    """Distinct finding keys currently present in the given severity bucket."""
+    return len({f.key for f in findings
+                if (f.severity == "critical") == critical})
 
 
 def _records(findings: List[Finding]) -> List[dict]:
@@ -47,16 +88,20 @@ def _records(findings: List[Finding]) -> List[dict]:
 
 
 def write_baseline(path: Path, findings: List[Finding], manifest: str, meta: dict,
-                   previous: Optional[List[Finding]] = None) -> bool:
+                   stats: Dict, previous: Optional[List[Finding]] = None,
+                   previous_stats: Optional[Dict] = None) -> bool:
     """Write the baseline. Returns False if it was left untouched.
 
     The payload carries a `generated` timestamp and scan metadata that move on
     every run, so an unconditional rewrite dirties the file even when nothing
     was found — which makes the workflow commit and push a large baseline after
-    every scheduled scan. Only a change in findings justifies a rewrite.
+    every scheduled scan. Only a change in findings — or in the cumulative
+    stats, which themselves only move when findings do (plus once, when a
+    pre-stats baseline adopts them) — justifies a rewrite.
     """
     records = _records(findings)
-    if previous is not None and path.exists() and _records(previous) == records:
+    if (previous is not None and path.exists()
+            and _records(previous) == records and previous_stats == stats):
         return False
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -65,6 +110,7 @@ def write_baseline(path: Path, findings: List[Finding], manifest: str, meta: dic
         "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+0000"),
         "manifest": manifest,
         "scan": meta,
+        "stats": stats,
         "findings": records,
     }
     with open(path, "w") as fh:
@@ -103,10 +149,6 @@ def run(argv: Optional[List[str]] = None) -> int:
                         help="Directory for delta.json / markdown outputs")
     parser.add_argument("--alert-on-first-run", action="store_true",
                         help="Treat all findings as new when no baseline exists")
-    parser.add_argument("--issue-comment", choices=("delta", "notice"),
-                        default="delta",
-                        help="Whether the rolling issue's comments carry the "
-                        "delta; only the footer wording depends on it here")
     parser.add_argument("--run-url", default=os.environ.get("MONITOR_RUN_URL", ""),
                         help="Workflow run URL to link from issue bodies")
     parser.add_argument("--quota-note", default="",
@@ -119,13 +161,18 @@ def run(argv: Optional[List[str]] = None) -> int:
     meta = scan_metadata(report)
     manifest = args.manifest or "unknown manifest"
 
-    baseline = load_baseline(args.baseline)
+    baseline, previous_stats = load_baseline(args.baseline)
     first_run = baseline is None
 
     if first_run and not args.alert_on_first_run:
         delta = Delta()
     else:
         delta = diff(baseline or [], current)
+
+    now = datetime.now(timezone.utc)
+    stats = update_stats(previous_stats, delta,
+                         now.strftime("%Y-%m-%dT%H:%M:%S+0000"))
+    date = now.strftime("%Y-%m-%d")
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -141,20 +188,29 @@ def run(argv: Optional[List[str]] = None) -> int:
     _github_step_summary(summary_md)
 
     issue_files = {}
+    comment_files = {}
     for critical, name in ((True, "critical"), (False, "standard")):
         relevant = (delta.new_critical or delta.changed_critical) if critical \
             else (delta.new_standard or delta.changed_standard)
         if not relevant:
             continue
         body_path = args.out_dir / f"issue_{name}.md"
-        body_path.write_text(render_issue_body(delta, manifest, critical,
-                                               run_url=args.run_url or None,
-                                               delta_comments=args.issue_comment == "delta"))
+        body_path.write_text(render_issue_body(
+            delta, manifest, critical,
+            run_url=args.run_url or None,
+            stats=stats,
+            outstanding=_outstanding(current, critical),
+            date=date))
+        comment_path = args.out_dir / f"issue_{name}_comment.md"
+        comment_path.write_text(render_issue_comment(
+            delta, critical, run_url=args.run_url or None, date=date))
         title_path = args.out_dir / f"issue_{name}.title"
         title_path.write_text(issue_title(manifest, critical))
         issue_files[name] = body_path
+        comment_files[name] = comment_path
 
-    if write_baseline(args.baseline, current, manifest, meta, previous=baseline):
+    if write_baseline(args.baseline, current, manifest, meta, stats,
+                      previous=baseline, previous_stats=previous_stats):
         print(f"Baseline written to {args.baseline}", file=sys.stderr)
     else:
         print("Findings unchanged — baseline left untouched", file=sys.stderr)
@@ -172,6 +228,8 @@ def run(argv: Optional[List[str]] = None) -> int:
         "summary-md": summary_path,
         "issue-critical-body": issue_files.get("critical", ""),
         "issue-standard-body": issue_files.get("standard", ""),
+        "issue-critical-comment": comment_files.get("critical", ""),
+        "issue-standard-comment": comment_files.get("standard", ""),
     })
 
     print(summary_md)

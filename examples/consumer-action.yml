@@ -24,7 +24,6 @@ jobs:
           # manifest-path: package-lock.json   # omit to auto-detect
           # scan-profile: hardened             # baseline is the default
           # fail-on: critical                  # never (default) for pure monitoring
-          # issue-comment: notice             # one-line ping; delta is the default
 
       # Example of building on the outputs — e.g. a Slack ping on malware:
       - if: steps.rl.outputs.has-critical-alerts == 'true'
