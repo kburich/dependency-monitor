@@ -1,6 +1,9 @@
 """Create or update the rolling notification issue via the `gh` CLI.
 
-One open issue per severity bucket (identified by label). The body is the
+One open issue per severity bucket, identified by its first (marker) label.
+The critical bucket's issue carries the shared issue-label as well, so the
+standard bucket passes `--exclude-label rl-protect-malware` to keep its
+lookup from resolving to the malware incident. The body is the
 issue's landing page — cumulative stats, edited to current on every alert —
 while each run's delta is posted as a comment (comments notify subscribers;
 body edits do not). Each delta is measured against the baseline the previous
@@ -12,6 +15,10 @@ On a new delta:
     a failure between the two calls must not lose the delta;
   - no open issue: create it (creation itself notifies, with the body), then
     post the delta comment so the thread holds the delta the body points at.
+
+A run that only *resolved* findings passes `--body-only`: the stats it shows
+have moved, so the body is refreshed, but there is nothing to report and a
+body edit does not notify. It never opens an issue.
 
 Usage:
     python -m monitor.gh_issue \
@@ -69,11 +76,27 @@ def _ensure_labels(repo: str, labels: List[str]) -> None:
         )
 
 
-def _find_open_issue(repo: str, label: str) -> Optional[int]:
+def _find_open_issue(repo: str, label: str,
+                     exclude: Optional[List[str]] = None) -> Optional[int]:
+    """Newest open issue carrying `label` and none of `exclude`.
+
+    The critical bucket's issue also carries the shared issue-label, so a
+    lookup by that label alone can resolve the standard bucket's rolling
+    issue to the malware incident — posting standard deltas into that thread
+    and overwriting its title and stats body. Excluding the other bucket's
+    marker keeps the two threads apart; filtering here rather than in the
+    query keeps it to one `gh` call, since `gh issue list --label` is an AND
+    and has no negative form.
+    """
     out = _gh(["issue", "list", "--repo", repo, "--state", "open",
-               "--label", label, "--json", "number", "--limit", "1"])
+               "--label", label, "--json", "number,labels", "--limit", "30"])
     issues = json.loads(out or "[]")
-    return issues[0]["number"] if issues else None
+    excluded = set(exclude or ())
+    for issue in issues:
+        names = {lb.get("name") for lb in issue.get("labels") or []}
+        if not (names & excluded):
+            return issue["number"]
+    return None
 
 
 def run(argv: Optional[List[str]] = None) -> int:
@@ -82,20 +105,43 @@ def run(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--title-file", required=True, type=_nonempty_path)
     parser.add_argument("--body-file", required=True, type=_nonempty_path,
                         help="Issue body: cumulative stats landing page")
-    parser.add_argument("--comment-file", type=_nonempty_path, required=True,
+    parser.add_argument("--comment-file", type=_nonempty_path,
                         help="Delta comment: the only durable copy of this "
                         "run's findings — the body is just the stats page")
+    parser.add_argument("--body-only", action="store_true",
+                        help="Refresh an existing issue's stats body without "
+                        "commenting, for a run that only resolved findings. "
+                        "Never opens an issue: there is nothing to report.")
     parser.add_argument("--label", action="append", required=True,
                         dest="labels", help="May be given multiple times; "
                         "the first label identifies the rolling issue")
+    parser.add_argument("--exclude-label", action="append", default=[],
+                        dest="exclude_labels", help="Never treat an issue "
+                        "carrying this label as this bucket's rolling issue, "
+                        "even if it also carries the marker label")
     args = parser.parse_args(argv)
+    # Exactly one of the two: silently falling back to the body would post
+    # the stats page as the delta comment, and a delta with no comment at all
+    # has no durable copy anywhere.
+    if bool(args.comment_file) == args.body_only:
+        parser.error("pass either --comment-file or --body-only")
 
     title = args.title_file.read_text().strip()
     comment_file = args.comment_file
     marker_label = args.labels[0]
 
     _ensure_labels(args.repo, args.labels)
-    number = _find_open_issue(args.repo, marker_label)
+    number = _find_open_issue(args.repo, marker_label, args.exclude_labels)
+
+    if args.body_only:
+        if number is None:
+            print(f"No open issue labeled {marker_label} — nothing to refresh")
+            return 0
+        _gh(["issue", "edit", str(number), "--repo", args.repo,
+             "--title", title, "--body-file", str(args.body_file)],
+            capture=False)
+        print(f"Refreshed the stats body on issue #{number} (no new findings)")
+        return 0
 
     if number is None:
         out = _gh(["issue", "create", "--repo", args.repo,
@@ -114,7 +160,8 @@ def run(argv: Optional[List[str]] = None) -> int:
         if not tail.isdigit():
             print("Could not parse the new issue's number from `gh issue "
                   "create` output — looking it up by label", file=sys.stderr)
-            number = _find_open_issue(args.repo, marker_label)
+            number = _find_open_issue(args.repo, marker_label,
+                                      args.exclude_labels)
             if number is None:
                 print(f"No open issue labeled {marker_label} found after "
                       "creation — delta comment not posted", file=sys.stderr)

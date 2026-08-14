@@ -95,9 +95,15 @@ outputs:
   first-run:
     description: '"true" when this run created the initial baseline'
     value: ${{ steps.diff.outputs.first-run }}
+  has-updates:
+    description: '"true" when any finding was new, worsened, or resolved'
+    value: ${{ steps.diff.outputs.has-updates }}
   delta-json:
     description: Path to the machine-readable delta report
     value: ${{ steps.diff.outputs.delta-json }}
+  delta-artifact:
+    description: Name of the uploaded artifact holding the full delta JSON
+    value: ${{ steps.delta-artifact.outputs.name }}
 
 runs:
   using: composite
@@ -215,8 +221,31 @@ runs:
           --out-dir "$RUNNER_TEMP/rl-protect-monitor-out" \
           "${EXTRA[@]}"
 
+    # Uploaded before the notification, and unconditionally: the delta
+    # comment groups its rows and caps its tables, so for a large scan the
+    # ungrouped list this artifact carries is the only complete copy — and
+    # the truncation notice in that comment points readers straight at it.
+    # Runner temp is discarded at job end, so an un-uploaded delta.json is
+    # gone.
+    - name: Name the delta artifact
+      id: delta-artifact
+      shell: bash
+      run: |
+        # Unique per action step, so scanning several manifests in one
+        # workflow does not collide (upload-artifact@v4 rejects duplicates).
+        echo "name=rl-protect-delta-${{ github.job }}-${{ github.action }}" \
+          >> "$GITHUB_OUTPUT"
+
+    - name: Upload delta report
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.delta-artifact.outputs.name }}
+        path: ${{ steps.diff.outputs.delta-json }}
+        if-no-files-found: error
+        retention-days: 90
+
     - name: Notify via GitHub issue
-      if: inputs.notify == 'issue' && steps.diff.outputs.has-alerts == 'true'
+      if: inputs.notify == 'issue' && steps.diff.outputs.has-updates == 'true'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
@@ -228,21 +257,30 @@ runs:
         STANDARD_COMMENT: ${{ steps.diff.outputs.issue-standard-comment }}
       run: |
         OUT="$RUNNER_TEMP/rl-protect-monitor-out"
-        if [[ -n "$CRITICAL_BODY" ]]; then
+        # An empty comment path means this bucket only resolved findings:
+        # refresh its stats body, but post nothing and open nothing.
+        notify_bucket() {
+          local title="$1" body="$2" comment="$3"
+          shift 3
+          local mode=(--comment-file "$comment")
+          if [[ -z "$comment" ]]; then
+            mode=(--body-only)
+          fi
           python -m monitor.gh_issue \
             --repo "$GITHUB_REPOSITORY" \
-            --title-file "$OUT/issue_critical.title" \
-            --body-file "$CRITICAL_BODY" \
-            --comment-file "$CRITICAL_COMMENT" \
+            --title-file "$title" \
+            --body-file "$body" \
+            "${mode[@]}" "$@"
+        }
+        if [[ -n "$CRITICAL_BODY" ]]; then
+          notify_bucket "$OUT/issue_critical.title" "$CRITICAL_BODY" \
+            "$CRITICAL_COMMENT" \
             --label "rl-protect-malware" --label "$ISSUE_LABEL"
         fi
         if [[ -n "$STANDARD_BODY" ]]; then
-          python -m monitor.gh_issue \
-            --repo "$GITHUB_REPOSITORY" \
-            --title-file "$OUT/issue_standard.title" \
-            --body-file "$STANDARD_BODY" \
-            --comment-file "$STANDARD_COMMENT" \
-            --label "$ISSUE_LABEL"
+          notify_bucket "$OUT/issue_standard.title" "$STANDARD_BODY" \
+            "$STANDARD_COMMENT" \
+            --label "$ISSUE_LABEL" --exclude-label "rl-protect-malware"
         fi
 
     - name: Commit updated baseline

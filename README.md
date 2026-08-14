@@ -85,8 +85,9 @@ run's baseline — so the comment thread is the complete history. See
 ## Outputs
 
 `new-count`, `new-critical-count`, `resolved-count`, `has-alerts`,
-`has-critical-alerts`, `first-run`, `delta-json` (path to the
-machine-readable delta).
+`has-critical-alerts`, `has-updates` (alerts *or* resolutions), `first-run`,
+`delta-json` (path to the machine-readable delta), `delta-artifact` (name of
+the uploaded artifact holding it).
 
 ## Operational notes
 
@@ -117,11 +118,28 @@ machine-readable delta).
 - **Alerts are grouped and capped**: the delta comments group one row per
   finding (listing the affected packages) and cap the table, since a real
   scan can produce 1200+ findings from 58 distinct CVEs. The complete,
-  ungrouped delta is always in the `delta.json` workflow artifact.
+  ungrouped delta is uploaded as a workflow artifact on every run — named by
+  the `delta-artifact` output and kept for 90 days — which is what the
+  comment's truncation notice points at.
+- **Resolutions refresh the issue quietly**: a run that only resolves
+  findings re-renders the issue body, so its "resolved" and "outstanding"
+  counters stay true, but posts no comment — a body edit doesn't notify, and
+  good news shouldn't page you. When a bucket's outstanding count reaches
+  zero the body says so; closing the issue is left to you.
 - **Stats live in the baseline**: the cumulative counters shown on the issue
   body are stored in the baseline's `stats` block and only count alerts since
-  monitoring started — the backlog absorbed on the first run isn't counted.
-  Deleting or regenerating the baseline resets them.
+  monitoring started — including "currently outstanding", so all four numbers
+  reconcile. The backlog absorbed on the first run is reported separately, as
+  "pre-existing backlog". Which findings have alerted is recorded as an
+  `alerted` flag on the finding records themselves, so the baseline carries
+  no duplicate copy of their keys. Deleting or regenerating the baseline
+  resets all of it. Baselines written before schema 2 are migrated on the
+  next run, at the cost of one extra baseline commit.
+- **Two units, both labelled**: counters and headlines are package-level (one
+  per package × finding, matching `delta.json` and the count outputs), while
+  a table row is one *distinct* finding across every package carrying it.
+  Where they differ the table says so, so a comment reading "1218 new" above
+  58 rows reconciles instead of looking wrong.
 
 ## Development
 

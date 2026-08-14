@@ -19,18 +19,33 @@ CREATED_URL = "https://github.com/owner/name/issues/9"
 
 
 class FakeGh:
-    """Records `gh` invocations; answers `issue list` with `open_number`."""
+    """Records `gh` invocations; answers `issue list` with `open_number`.
 
-    def __init__(self, open_number=None):
+    `open_issues` overrides that with (number, labels) pairs newest first —
+    the order `gh issue list` returns — for the cases that turn on which
+    labels an issue carries.
+    """
+
+    def __init__(self, open_number=None, open_issues=None):
         self.open_number = open_number
+        self.open_issues = open_issues
         self.calls = []
+
+    def _listing(self, cmd):
+        if self.open_issues is None:
+            if self.open_number is None:
+                return []
+            return [{"number": self.open_number, "labels": []}]
+        wanted = flag(cmd, "--label")
+        return [{"number": number,
+                 "labels": [{"name": name} for name in labels]}
+                for number, labels in self.open_issues if wanted in labels]
 
     def __call__(self, cmd, **kwargs):
         self.calls.append(cmd)
         stdout = ""
         if cmd[:3] == ["gh", "issue", "list"]:
-            found = [] if self.open_number is None else [{"number": self.open_number}]
-            stdout = json.dumps(found)
+            stdout = json.dumps(self._listing(cmd))
         elif cmd[:3] == ["gh", "issue", "create"]:
             stdout = CREATED_URL + "\n"
         return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
@@ -68,14 +83,17 @@ def outputs(tmp_path):
 
 
 def notify(monkeypatch, fake, outputs, labels=("rl-protect-monitor",),
-           rc=0):
+           exclude=(), body_only=False, rc=0):
     monkeypatch.setattr(gh_issue.subprocess, "run", fake)
     argv = ["--repo", "owner/name",
             "--title-file", str(outputs / "issue.title"),
-            "--body-file", str(outputs / "issue.md"),
-            "--comment-file", str(outputs / "issue_comment.md")]
+            "--body-file", str(outputs / "issue.md")]
+    argv += (["--body-only"] if body_only
+             else ["--comment-file", str(outputs / "issue_comment.md")])
     for label in labels:
         argv += ["--label", label]
+    for label in exclude:
+        argv += ["--exclude-label", label]
     assert gh_issue.run(argv) == rc
     return fake
 
@@ -149,6 +167,17 @@ class TestNoOpenIssue:
         labels = [create[i + 1] for i, arg in enumerate(create) if arg == "--label"]
         assert labels == ["rl-protect-monitor", "rl-protect-malware"]
 
+    def test_create_opens_the_issue_with_the_stats_body_and_title(
+            self, monkeypatch, outputs):
+        """The create path had no argv assertion at all: swapping the comment
+        file in as the body opens every rolling issue with a delta as its
+        landing page, and the stats body never reaches the issue that first
+        creates it."""
+        fake = notify(monkeypatch, FakeGh(open_number=None), outputs)
+        create = fake.call("create")
+        assert flag(create, "--body-file") == str(outputs / "issue.md")
+        assert flag(create, "--title").startswith("🚨 Malware/tampering")
+
     def test_rolling_issue_is_looked_up_by_the_first_label(self, monkeypatch,
                                                            outputs):
         """The first label is the marker; the rest are decoration."""
@@ -182,6 +211,79 @@ class TestNoOpenIssue:
                           "--comment-file", str(outputs / "issue_comment.md"),
                           "--label", "rl-protect-monitor"])
         assert "Issues are disabled" in capsys.readouterr().err
+
+
+class TestBodyOnlyRefresh:
+    """A run that only resolved findings. Its counters moved, so the stats
+    body is stale and must be refreshed — but there is nothing to report, so
+    nothing is posted and no issue is opened."""
+
+    def test_the_body_is_edited_and_nothing_is_posted(self, monkeypatch,
+                                                       outputs):
+        fake = notify(monkeypatch, FakeGh(open_number=7), outputs,
+                      body_only=True)
+        assert fake.verbs() == ["list", "edit"]
+        edit = fake.call("edit")
+        assert edit[3] == "7"
+        assert flag(edit, "--body-file") == str(outputs / "issue.md")
+
+    def test_no_issue_is_opened_when_none_is_open(self, monkeypatch, outputs):
+        """Opening an issue to announce that nothing is wrong is noise."""
+        fake = notify(monkeypatch, FakeGh(open_number=None), outputs,
+                      body_only=True)
+        assert fake.verbs() == ["list"]
+
+    def test_body_only_and_comment_file_are_mutually_exclusive(self,
+                                                               monkeypatch,
+                                                               outputs):
+        """Both together is ambiguous: --body-only would silently win and the
+        delta it was given would never be posted anywhere."""
+        fake = FakeGh(open_number=7)
+        monkeypatch.setattr(gh_issue.subprocess, "run", fake)
+        with pytest.raises(SystemExit):
+            gh_issue.run(["--repo", "owner/name",
+                          "--title-file", str(outputs / "issue.title"),
+                          "--body-file", str(outputs / "issue.md"),
+                          "--comment-file", str(outputs / "issue_comment.md"),
+                          "--body-only",
+                          "--label", "rl-protect-monitor"])
+        assert fake.calls == []
+
+
+MALWARE_ISSUE = (2, ["rl-protect-malware", "rl-protect-monitor"])
+STANDARD_ISSUE = (1, ["rl-protect-monitor"])
+
+
+class TestBucketIsolation:
+    """The critical issue carries the shared issue-label as well as its own
+    marker, so a standard lookup by the shared label alone can land on the
+    malware incident — commenting a standard delta into that thread and
+    replacing its title and body with the standard bucket's stats page."""
+
+    def test_the_malware_issue_is_not_adopted_as_the_standard_issue(
+            self, monkeypatch, outputs):
+        fake = notify(monkeypatch,
+                      FakeGh(open_issues=[MALWARE_ISSUE, STANDARD_ISSUE]),
+                      outputs, exclude=("rl-protect-malware",))
+        assert fake.call("comment")[3] == "1"
+        assert fake.call("edit")[3] == "1"
+
+    def test_a_new_issue_opens_when_only_the_malware_issue_matches(
+            self, monkeypatch, outputs):
+        """A second standard issue is recoverable; a clobbered incident is
+        not — the malware issue's counters would be gone for good."""
+        fake = notify(monkeypatch, FakeGh(open_issues=[MALWARE_ISSUE]),
+                      outputs, exclude=("rl-protect-malware",))
+        assert "edit" not in fake.verbs()
+        assert "create" in fake.verbs()
+
+    def test_the_critical_lookup_still_finds_its_own_issue(self, monkeypatch,
+                                                           outputs):
+        """Its marker is unique to the bucket, so it needs no exclusion."""
+        fake = notify(monkeypatch, FakeGh(open_issues=[MALWARE_ISSUE]),
+                      outputs,
+                      labels=("rl-protect-malware", "rl-protect-monitor"))
+        assert fake.call("edit")[3] == "2"
 
 
 class BadCreateOutputGh(FakeGh):

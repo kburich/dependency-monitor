@@ -32,6 +32,11 @@ upgrading, when the baseline adopts its `stats` block.
 
 ### Added
 
+- `has-updates` output: true when anything was new, worsened, *or* resolved.
+  The notification step gates on it rather than `has-alerts`, so a
+  resolution-only run still refreshes the issue's stats body.
+- `delta-artifact` output: the name of the uploaded artifact holding the
+  complete, ungrouped `delta.json`.
 - Cumulative counters in the baseline (`stats` block), kept per severity
   bucket and counting only alerts since monitoring started — the backlog
   absorbed on the first run is not counted, and neither are its resolutions
@@ -39,6 +44,89 @@ upgrading, when the baseline adopts its `stats` block.
   only those). They move only when findings change, so the "no commit churn
   on quiet runs" guarantee from 1.1.0 holds. Deleting or regenerating the
   baseline resets them.
+
+### Changed
+
+- **Baseline schema 2.** The set of finding keys that have alerted moved out
+  of `stats.*.alerted` and onto the finding records themselves, as an
+  `alerted: true` flag. The old parallel list duplicated the key of a record
+  already in the file: on a 1239-finding scan it added ~122 KB (a 24% larger
+  baseline) and a 6,213-line `stats` block, so a routine lockfile bump
+  produced a multi-thousand-line diff hunk. It is now 15 lines. Existing
+  schema-1 baselines are migrated automatically on the next run — one extra
+  commit, and nothing already alerted is forgotten.
+
+### Fixed
+
+- The delta comment names the manifest again, and malware comments carry the
+  incident guidance. Both moved to the issue body when the delta was split
+  into a comment, but the body is edited silently — the comment is what
+  notifies — so the alert email named neither what was scanned (one rolling
+  issue can cover several manifests, and the title is overwritten by
+  whichever ran last) nor why the finding was urgent.
+- A malformed entry in a baseline's `stats.*.alerted` list no longer takes
+  down the run. Entries are validated against the finding-key shape (three
+  strings) instead of only being checked for being lists, so a hand-edited or
+  merge-mangled entry is dropped like every other corrupt stats value. It
+  previously raised while folding in the run's delta — before any output was
+  written, so the notify and baseline-commit steps were skipped and a live
+  malware finding was silently dropped on every run until someone deleted the
+  baseline.
+- The standard bucket no longer adopts the malware issue as its rolling
+  issue. The critical issue carries the shared `issue-label` alongside
+  `rl-protect-malware`, so a lookup by the shared label alone could resolve to
+  it — posting the standard delta into the malware incident thread and
+  replacing its title and counters with the standard bucket's stats page. The
+  standard lookup now excludes issues labeled `rl-protect-malware`.
+- An `Infinity` counter in a baseline's `stats` block heals to 0 like every
+  other corrupt value. `json.load` accepts the non-standard literal, and
+  `int()` on the resulting float raises `OverflowError` rather than the
+  `ValueError` the healing caught — so it took the run down with it.
+- Finding titles, ids, categories and package URLs are escaped before going
+  into a Markdown table cell. They come from the vendor's finding database,
+  so a `|` added a phantom column, a newline ended the row and the table, and
+  a literal `</details>` closed the collapsible block early — leaving the
+  rest of the delta rendered expanded.
+- The full delta is actually uploaded now. Truncation notices and the README
+  both pointed readers at "the `delta.json` workflow artifact", but no step
+  ever uploaded one — and runner temp is discarded at job end, so for a
+  capped delta the hidden findings were unrecoverable. A new step uploads it
+  on every run, before the notification, under the name given by the new
+  `delta-artifact` output.
+- A run that only *resolves* findings now refreshes the issue body. Its
+  `resolved` and `outstanding` counters move in the committed baseline, but
+  the body was re-rendered only for new-or-worsened findings, so an open
+  issue kept asserting the pre-resolution numbers indefinitely — a fixed
+  malware incident still reading "Currently outstanding: 1". No comment is
+  posted for such a run (a body edit does not notify), no issue is opened if
+  none is open, and a bucket whose outstanding count reaches zero now says so
+  on the body.
+- "Currently outstanding" is now on the same basis as the three counters
+  beside it. It counted every finding present in the bucket, including the
+  first-run backlog the others deliberately exclude, so the body could read
+  "Alerted so far: 1 new · Resolved since then: 0 · Currently outstanding: 3"
+  and leave a reader concluding that two findings appeared without ever
+  alerting. It now counts what the bucket has alerted on and not seen
+  resolved; the backlog is reported on its own line as "Pre-existing
+  backlog", so it stays visible instead of being folded into another number.
+- Delta tables state their own unit. A headline counts findings per affected
+  package while a row is one distinct finding, which on a real scan differ by
+  an order of magnitude — a comment headed "1218 new" showing 58 rows, both
+  called "findings". Tables that collapsed anything now say how many findings
+  grouped into how many distinct ones, and the truncation note counts
+  "distinct findings".
+- Whether to rewrite the baseline is decided by comparing everything durable
+  in it, rather than by naming the fields that count. Naming them worked only
+  as long as nobody added another: any new counter would have re-committed
+  and pushed the whole baseline after every scheduled scan, undoing the
+  no-churn guarantee from 1.1.0, and nothing would have caught it. A rewrite
+  on a run where no finding changed now also logs a warning naming the cause.
+- The body-size guard can no longer return a body *larger* than the limit.
+  Its reserve for reclosing open `<details>` blocks was sized from the whole
+  body's tag count, which for a body dense with tags exceeded the limit and
+  made the slice index negative, trimming from the tail instead of
+  truncating. It now searches for the largest prefix that fits, so it neither
+  overshoots the limit nor discards more of the body than it has to.
 
 ## [1.2.0] - 2026-08-08
 
