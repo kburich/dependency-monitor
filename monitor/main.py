@@ -42,35 +42,55 @@ def load_baseline(path: Path) -> Tuple[Optional[List[Finding]], Dict]:
     return findings, stats if isinstance(stats, dict) else {}
 
 
-def _bucket(raw) -> Dict[str, int]:
+def _count(value) -> int:
+    # Corrupt stats heal to 0 like every other malformed-stats shape does —
+    # a mangled cosmetic counter must not take down the whole alerting run.
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _bucket(raw) -> Dict:
     raw = raw if isinstance(raw, dict) else {}
-    return {k: int(raw.get(k) or 0) for k in ("runs", "new", "changed", "resolved")}
+    bucket: Dict = {k: _count(raw.get(k))
+                    for k in ("runs", "new", "changed", "resolved")}
+    alerted = raw.get("alerted")
+    bucket["alerted"] = ([k for k in alerted if isinstance(k, list)]
+                         if isinstance(alerted, list) else [])
+    return bucket
 
 
 def update_stats(previous: Dict, delta: Delta, now: str) -> Dict:
     """Fold this run's delta into the cumulative counters kept in the baseline.
 
     The counters cover alerts *since monitoring started*: a backlog absorbed
-    silently on the first run is deliberately not counted. `since` is set the
-    first time stats are written and preserved afterwards.
+    silently on the first run is deliberately not counted — including its
+    resolutions, so each bucket carries the keys it has alerted on
+    (`alerted`) and `resolved` counts only those. `since` is set the first
+    time stats are written and preserved afterwards.
     """
     stats = {
         "since": str(previous.get("since") or now),
         "critical": _bucket(previous.get("critical")),
         "standard": _bucket(previous.get("standard")),
     }
-    for name, new, changed, resolved in (
-        ("critical", delta.new_critical, delta.changed_critical,
-         delta.resolved_critical),
-        ("standard", delta.new_standard, delta.changed_standard,
-         delta.resolved_standard),
-    ):
+    for name, critical in (("critical", True), ("standard", False)):
+        new, changed = delta.alerts(critical)
+        resolved = (delta.resolved_critical if critical
+                    else delta.resolved_standard)
         bucket = stats[name]
+        alerted = {tuple(k) for k in bucket["alerted"]}
         if new or changed:
             bucket["runs"] += 1
         bucket["new"] += len(new)
         bucket["changed"] += len(changed)
-        bucket["resolved"] += len(resolved)
+        bucket["resolved"] += sum(1 for f in resolved if f.key in alerted)
+        # A resolved key leaves the set: if the finding ever returns, it
+        # alerts — and is counted — as new again.
+        alerted |= {f.key for f in new} | {c.after.key for c in changed}
+        alerted -= {f.key for f in resolved}
+        bucket["alerted"] = sorted(list(k) for k in alerted)
     return stats
 
 
@@ -173,6 +193,12 @@ def run(argv: Optional[List[str]] = None) -> int:
     stats = update_stats(previous_stats, delta,
                          now.strftime("%Y-%m-%dT%H:%M:%S+0000"))
     date = now.strftime("%Y-%m-%d")
+    if not previous_stats:
+        # Expected once (first run, or a pre-stats baseline adopting stats).
+        # On every run it means the rewritten baseline is never persisted:
+        # the issue's "cumulative" stats are resetting each time.
+        print(f"Cumulative stats initialized (since {date}) — they persist "
+              "via the rewritten baseline", file=sys.stderr)
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -190,9 +216,8 @@ def run(argv: Optional[List[str]] = None) -> int:
     issue_files = {}
     comment_files = {}
     for critical, name in ((True, "critical"), (False, "standard")):
-        relevant = (delta.new_critical or delta.changed_critical) if critical \
-            else (delta.new_standard or delta.changed_standard)
-        if not relevant:
+        new, changed = delta.alerts(critical)
+        if not (new or changed):
             continue
         body_path = args.out_dir / f"issue_{name}.md"
         body_path.write_text(render_issue_body(

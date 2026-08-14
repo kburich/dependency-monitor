@@ -68,16 +68,15 @@ def outputs(tmp_path):
 
 
 def notify(monkeypatch, fake, outputs, labels=("rl-protect-monitor",),
-           comment_file=True):
+           rc=0):
     monkeypatch.setattr(gh_issue.subprocess, "run", fake)
     argv = ["--repo", "owner/name",
             "--title-file", str(outputs / "issue.title"),
-            "--body-file", str(outputs / "issue.md")]
-    if comment_file:
-        argv += ["--comment-file", str(outputs / "issue_comment.md")]
+            "--body-file", str(outputs / "issue.md"),
+            "--comment-file", str(outputs / "issue_comment.md")]
     for label in labels:
         argv += ["--label", label]
-    assert gh_issue.run(argv) == 0
+    assert gh_issue.run(argv) == rc
     return fake
 
 
@@ -106,12 +105,31 @@ class TestExistingIssue:
         fake = notify(monkeypatch, FakeGh(open_number=7), outputs)
         assert "create" not in fake.verbs()
 
-    def test_comment_falls_back_to_the_body_file(self, monkeypatch, outputs):
-        """Without --comment-file the delta must still land somewhere durable."""
-        fake = notify(monkeypatch, FakeGh(open_number=7), outputs,
-                      comment_file=False)
-        comment = fake.call("comment")
-        assert flag(comment, "--body-file") == str(outputs / "issue.md")
+    def test_comment_file_is_required(self, monkeypatch, outputs):
+        """Falling back to the body would post the stats page as the delta
+        comment and the findings would never reach the issue."""
+        fake = FakeGh(open_number=7)
+        monkeypatch.setattr(gh_issue.subprocess, "run", fake)
+        with pytest.raises(SystemExit):
+            gh_issue.run(["--repo", "owner/name",
+                          "--title-file", str(outputs / "issue.title"),
+                          "--body-file", str(outputs / "issue.md"),
+                          "--label", "rl-protect-monitor"])
+        assert fake.issue_calls() == []
+
+    def test_empty_comment_file_is_rejected_before_any_gh_call(self,
+                                                               monkeypatch,
+                                                               outputs):
+        """argparse turns "" into Path('.') — gh must never see it."""
+        fake = FakeGh(open_number=7)
+        monkeypatch.setattr(gh_issue.subprocess, "run", fake)
+        with pytest.raises(SystemExit):
+            gh_issue.run(["--repo", "owner/name",
+                          "--title-file", str(outputs / "issue.title"),
+                          "--body-file", str(outputs / "issue.md"),
+                          "--comment-file", "",
+                          "--label", "rl-protect-monitor"])
+        assert fake.calls == []
 
 
 class TestNoOpenIssue:
@@ -137,3 +155,69 @@ class TestNoOpenIssue:
         fake = notify(monkeypatch, FakeGh(open_number=None), outputs,
                       labels=("rl-protect-monitor", "rl-protect-malware"))
         assert flag(fake.call("list"), "--label") == "rl-protect-monitor"
+
+    def test_created_issue_url_is_echoed_to_the_log(self, monkeypatch, outputs,
+                                                    capsys):
+        notify(monkeypatch, FakeGh(open_number=None), outputs)
+        assert CREATED_URL in capsys.readouterr().out
+
+    def test_create_failure_surfaces_gh_stderr(self, monkeypatch, outputs,
+                                               capsys):
+        """CalledProcessError's message is only the exit status — the actual
+        reason (missing issues:write, issues disabled) is on gh's stderr."""
+        class FailingCreateGh(FakeGh):
+            def __call__(self, cmd, **kwargs):
+                result = super().__call__(cmd, **kwargs)
+                if cmd[:3] == ["gh", "issue", "create"]:
+                    return subprocess.CompletedProcess(
+                        cmd, 1, stdout="",
+                        stderr="GraphQL: Issues are disabled for this repo\n")
+                return result
+
+        monkeypatch.setattr(gh_issue.subprocess, "run", FailingCreateGh())
+        with pytest.raises(subprocess.CalledProcessError):
+            gh_issue.run(["--repo", "owner/name",
+                          "--title-file", str(outputs / "issue.title"),
+                          "--body-file", str(outputs / "issue.md"),
+                          "--comment-file", str(outputs / "issue_comment.md"),
+                          "--label", "rl-protect-monitor"])
+        assert "Issues are disabled" in capsys.readouterr().err
+
+
+class BadCreateOutputGh(FakeGh):
+    """`gh issue create` prints something that doesn't end in the number.
+
+    `issue list` answers `found_after_create` once the create has happened,
+    mimicking the just-created issue being (or not being) findable by label.
+    """
+
+    def __init__(self, found_after_create=None):
+        super().__init__(open_number=None)
+        self.found_after_create = found_after_create
+
+    def __call__(self, cmd, **kwargs):
+        result = super().__call__(cmd, **kwargs)
+        if cmd[:3] == ["gh", "issue", "create"]:
+            self.open_number = self.found_after_create
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="Creating issue in owner/name\n", stderr="")
+        return result
+
+
+class TestUnparseableCreateOutput:
+    def test_issue_is_refound_by_label_and_gets_the_comment(self, monkeypatch,
+                                                            outputs):
+        """The delta lives only in the comment — recover the number by label."""
+        fake = notify(monkeypatch, BadCreateOutputGh(found_after_create=9),
+                      outputs)
+        assert fake.verbs() == ["list", "create", "list", "comment"]
+        comment = fake.call("comment")
+        assert comment[3] == "9"
+        assert flag(comment, "--body-file") == str(outputs / "issue_comment.md")
+
+    def test_run_fails_when_the_issue_cannot_be_refound(self, monkeypatch,
+                                                        outputs):
+        """Exiting 0 here would commit the baseline and lose the delta."""
+        fake = notify(monkeypatch, BadCreateOutputGh(found_after_create=None),
+                      outputs, rc=1)
+        assert "comment" not in fake.verbs()

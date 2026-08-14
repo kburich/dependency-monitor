@@ -162,7 +162,8 @@ def test_first_run_absorbs_backlog_without_counting_it(env):
     tmp_path, _ = env
     invoke(tmp_path, "report_baseline.json")
     stats = baseline_stats(tmp_path)
-    assert stats["standard"] == {"runs": 0, "new": 0, "changed": 0, "resolved": 0}
+    assert stats["standard"] == {"runs": 0, "new": 0, "changed": 0,
+                                 "resolved": 0, "alerted": []}
     assert stats["since"]
 
 
@@ -179,10 +180,37 @@ def test_stats_accumulate_across_runs(env):
     # malware gone again, a CVE appears: resolved and new both accumulate
     invoke(tmp_path, "report_new_cve.json")
     stats = baseline_stats(tmp_path)
-    assert stats["critical"] == {"runs": 1, "new": 1, "changed": 0, "resolved": 1}
+    assert stats["critical"] == {"runs": 1, "new": 1, "changed": 0,
+                                 "resolved": 1, "alerted": []}
     assert stats["standard"]["new"] == 1
     assert stats["standard"]["runs"] == 1
     assert stats["since"] == since
+
+
+def test_corrupt_stats_values_heal_instead_of_crashing(env):
+    """A hand-edited or merge-mangled counter heals to 0 like every other
+    malformed-stats shape, instead of taking down the alerting run."""
+    tmp_path, _ = env
+    baseline = tmp_path / ".rl-protect" / "baseline.json"
+    invoke(tmp_path, "report_baseline.json")
+    data = json.loads(baseline.read_text())
+    data["stats"]["standard"] = {"runs": "1.5", "new": [2], "changed": None,
+                                 "alerted": "oops"}
+    baseline.write_text(json.dumps(data))
+
+    assert invoke(tmp_path, "report_new_cve.json") == 0
+    stats = baseline_stats(tmp_path)
+    assert stats["standard"]["runs"] == 1  # healed to 0 + this run's alert
+    assert stats["standard"]["new"] == 1
+
+
+def test_backlog_resolution_is_not_counted_as_resolved(env):
+    """A fixed backlog finding never alerted — its resolution must not
+    inflate "Resolved since then" past what was ever alerted."""
+    tmp_path, _ = env
+    invoke(tmp_path, "report_baseline.json")
+    invoke(tmp_path, "report_resolved.json")
+    assert baseline_stats(tmp_path)["standard"]["resolved"] == 0
 
 
 def test_pre_stats_baseline_adopts_stats_once(env):
@@ -199,3 +227,14 @@ def test_pre_stats_baseline_adopts_stats_once(env):
     before = baseline.read_text()
     invoke(tmp_path, "report_baseline.json")
     assert baseline.read_text() == before
+
+
+def test_stats_initialized_note_appears_only_on_adoption(env, capsys):
+    """This note repeating on every run is the visible symptom of a
+    never-persisted baseline (commit-baseline: false without a custom
+    persist step): the "cumulative" stats are resetting each time."""
+    tmp_path, _ = env
+    invoke(tmp_path, "report_baseline.json")
+    assert "Cumulative stats initialized" in capsys.readouterr().err
+    invoke(tmp_path, "report_new_malware.json")
+    assert "Cumulative stats initialized" not in capsys.readouterr().err

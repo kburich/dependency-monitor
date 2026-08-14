@@ -40,7 +40,11 @@ inputs:
     required: false
     default: ""
   commit-baseline:
-    description: Commit and push the updated baseline (needs contents write)
+    description: >-
+      Commit and push the updated baseline (needs contents write). If false,
+      you must persist the rewritten baseline yourself: against a stale
+      baseline every run repeats the same alerts and the issue's cumulative
+      stats reset to a single-run snapshot.
     required: false
     default: "true"
   notify:

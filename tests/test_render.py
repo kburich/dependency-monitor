@@ -77,6 +77,16 @@ class TestTruncation:
         assert len(comment) <= GITHUB_BODY_LIMIT
         assert "truncated to fit GitHub's size limit" in comment
 
+    def test_clip_recloses_the_details_block_before_the_notice(self):
+        """A cut inside <details> must not leave it unclosed — GitHub would
+        auto-close at comment end and swallow the truncation notice into the
+        collapsed section."""
+        delta = Delta(new=[cve(f"pkg:npm/p{i}@1", f"CVE-{i}", title="x" * 10000)
+                           for i in range(MAX_ROWS_ISSUE)])
+        comment = render_issue_comment(delta, critical=False)
+        assert comment.count("<details>") == comment.count("</details>")
+        assert comment.rfind("</details>") < comment.rfind("truncated to fit")
+
     def test_no_truncation_note_when_everything_fits(self):
         comment = render_issue_comment(Delta(new=[cve("pkg:npm/a@1")]),
                                        critical=False)

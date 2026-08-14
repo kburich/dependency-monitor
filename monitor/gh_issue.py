@@ -37,11 +37,26 @@ from typing import List, Optional
 def _gh(args: List[str], capture: bool = True) -> str:
     result = subprocess.run(
         ["gh"] + args,
-        check=True,
+        check=False,
         text=True,
         capture_output=capture,
     )
+    if result.returncode != 0:
+        # gh's diagnostic is on stderr; CalledProcessError's message is only
+        # the exit status, so surface the captured text before raising.
+        if capture and result.stderr:
+            print(result.stderr, file=sys.stderr, end="")
+        raise subprocess.CalledProcessError(
+            result.returncode, result.args, result.stdout, result.stderr)
     return result.stdout if capture else ""
+
+
+def _nonempty_path(value: str) -> Path:
+    # argparse type: Path("") is PosixPath("."), which is truthy — an empty
+    # flag value must fail parsing, not surface as a `gh` call against ".".
+    if not value:
+        raise argparse.ArgumentTypeError("path must be non-empty")
+    return Path(value)
 
 
 def _ensure_labels(repo: str, labels: List[str]) -> None:
@@ -64,18 +79,19 @@ def _find_open_issue(repo: str, label: str) -> Optional[int]:
 def run(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="rl-protect-monitor-notify")
     parser.add_argument("--repo", required=True)
-    parser.add_argument("--title-file", required=True, type=Path)
-    parser.add_argument("--body-file", required=True, type=Path,
+    parser.add_argument("--title-file", required=True, type=_nonempty_path)
+    parser.add_argument("--body-file", required=True, type=_nonempty_path,
                         help="Issue body: cumulative stats landing page")
-    parser.add_argument("--comment-file", type=Path, default=None,
-                        help="Delta comment; defaults to --body-file")
+    parser.add_argument("--comment-file", type=_nonempty_path, required=True,
+                        help="Delta comment: the only durable copy of this "
+                        "run's findings — the body is just the stats page")
     parser.add_argument("--label", action="append", required=True,
                         dest="labels", help="May be given multiple times; "
                         "the first label identifies the rolling issue")
     args = parser.parse_args(argv)
 
     title = args.title_file.read_text().strip()
-    comment_file = args.comment_file or args.body_file
+    comment_file = args.comment_file
     marker_label = args.labels[0]
 
     _ensure_labels(args.repo, args.labels)
@@ -86,17 +102,26 @@ def run(argv: Optional[List[str]] = None) -> int:
                    "--title", title,
                    "--body-file", str(args.body_file)]
                   + [arg for label in args.labels for arg in ("--label", label)])
-        print(f"Created new issue labeled {marker_label}")
+        url = out.strip().splitlines()[-1] if out.strip() else ""
+        print(f"Created new issue labeled {marker_label}"
+              + (f": {url}" if url else ""))
         # `gh issue create` prints the new issue's URL; the delta comment
-        # needs its number. Creation already notified with the body, so a
-        # parse failure costs only the comment, not the alert.
-        tail = out.strip().rsplit("/", 1)[-1] if out.strip() else ""
-        if tail.isdigit():
-            _gh(["issue", "comment", tail, "--repo", args.repo,
-                 "--body-file", str(comment_file)], capture=False)
-        else:
+        # needs its number. The comment is the delta's only durable copy,
+        # so if the URL is unparseable, re-find the issue by its marker
+        # label — and fail rather than drop the delta: a nonzero exit keeps
+        # the baseline uncommitted, so the next run regenerates it.
+        tail = url.rsplit("/", 1)[-1] if url else ""
+        if not tail.isdigit():
             print("Could not parse the new issue's number from `gh issue "
-                  "create` output — delta comment skipped", file=sys.stderr)
+                  "create` output — looking it up by label", file=sys.stderr)
+            number = _find_open_issue(args.repo, marker_label)
+            if number is None:
+                print(f"No open issue labeled {marker_label} found after "
+                      "creation — delta comment not posted", file=sys.stderr)
+                return 1
+            tail = str(number)
+        _gh(["issue", "comment", tail, "--repo", args.repo,
+             "--body-file", str(comment_file)], capture=False)
     else:
         # Comment first: the body edit replaces the stats snapshot, but the
         # delta exists only here — a failure between the two calls must not

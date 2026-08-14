@@ -73,7 +73,7 @@ run's baseline — so the comment thread is the complete history. See
 | `check-deps` | `release,develop,transitive` | Passed to `rl-protect scan --check-deps` |
 | `baseline-path` | `.rl-protect/baseline.json` | Committed findings baseline |
 | `baseline-branch` | — | Store the baseline on a dedicated orphan branch (e.g. `rl-protect-baseline`) instead of the scanned branch — use when the scanned branch is protected |
-| `commit-baseline` | `true` | Commit + push the updated baseline |
+| `commit-baseline` | `true` | Commit + push the updated baseline. If `false`, persist the rewritten baseline yourself — against a stale baseline every run repeats the same alerts and the issue's cumulative stats reset to a single-run snapshot |
 | `notify` | `issue` | `issue` / `none` (job summary is always written) |
 | `issue-label` | `rl-protect-monitor` | Label of the rolling issue |
 | `alert-on-first-run` | `false` | Alert on all findings when no baseline exists |

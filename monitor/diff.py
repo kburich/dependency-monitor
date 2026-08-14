@@ -14,7 +14,7 @@ on the row when it accompanies a real escalation.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Tuple
 
 from .normalize import Finding, STATUS_RANK
 
@@ -70,6 +70,17 @@ class Delta:
     @property
     def resolved_standard(self) -> List[Finding]:
         return [f for f in self.resolved if f.severity == "standard"]
+
+    def alerts(self, critical: bool) -> Tuple[List[Finding], List[Change]]:
+        """The (new, changed) pair a severity bucket alerts on.
+
+        The single selection point for every consumer that renders or counts
+        one bucket — body headline, comment tables, stats counters, and the
+        should-render guard must all agree on it.
+        """
+        if critical:
+            return self.new_critical, self.changed_critical
+        return self.new_standard, self.changed_standard
 
     @property
     def has_alerts(self) -> bool:

@@ -118,9 +118,15 @@ def _clip(body: str, limit: int = GITHUB_BODY_LIMIT) -> str:
     if len(body) <= limit:
         return body
     notice = f"\n\n_Body truncated to fit GitHub's size limit._ {_FULL_LIST_NOTE}"
-    keep = body[: limit - len(notice)]
+    # Reserve room to reclose any <details> the cut leaves open — GitHub
+    # auto-closes them at the end of the comment, which would render the
+    # notice hidden inside the collapsed block.
+    closer = "\n\n</details>"
+    reserve = len(notice) + len(closer) * body.count("<details>")
+    keep = body[: limit - reserve]
     keep = keep[: keep.rfind("\n")] if "\n" in keep else keep
-    return keep + notice
+    closers = closer * (keep.count("<details>") - keep.count("</details>"))
+    return keep + closers + notice
 
 
 def render_summary(delta: Delta, manifest: str, first_run: bool = False,
@@ -189,15 +195,14 @@ def render_issue_body(delta: Delta, manifest: str, critical: bool,
     itself is deliberately not repeated here — the comment is its durable,
     notifying copy.
     """
+    new, changed = delta.alerts(critical)
     if critical:
-        new, changed = delta.new_critical, delta.changed_critical
         intro = (
             "rl-protect flagged **malware or tampering** in a dependency that "
             "was previously clean. Treat this as an incident: the affected "
             "version may already be installed in dev machines and CI."
         )
     else:
-        new, changed = delta.new_standard, delta.changed_standard
         intro = (
             "rl-protect found new (non-malware) findings in previously "
             "scanned dependencies."
@@ -246,12 +251,8 @@ def render_issue_comment(delta: Delta, critical: bool,
     email clients ignore <details>, so the notification email still shows the
     full delta expanded.
     """
-    if critical:
-        new, changed = delta.new_critical, delta.changed_critical
-        label = "🚨 Malware/tampering"
-    else:
-        new, changed = delta.new_standard, delta.changed_standard
-        label = "New findings"
+    new, changed = delta.alerts(critical)
+    label = "🚨 Malware/tampering" if critical else "New findings"
 
     head = f"**{label}: {_delta_headline(len(new), len(changed))}**"
     if date:

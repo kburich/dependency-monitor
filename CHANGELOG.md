@@ -34,9 +34,11 @@ upgrading, when the baseline adopts its `stats` block.
 
 - Cumulative counters in the baseline (`stats` block), kept per severity
   bucket and counting only alerts since monitoring started — the backlog
-  absorbed on the first run is not counted. They move only when findings
-  change, so the "no commit churn on quiet runs" guarantee from 1.1.0 holds.
-  Deleting or regenerating the baseline resets them.
+  absorbed on the first run is not counted, and neither are its resolutions
+  (each bucket tracks the finding keys it has alerted on; `resolved` counts
+  only those). They move only when findings change, so the "no commit churn
+  on quiet runs" guarantee from 1.1.0 holds. Deleting or regenerating the
+  baseline resets them.
 
 ## [1.2.0] - 2026-08-08
 
