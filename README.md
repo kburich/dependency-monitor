@@ -75,7 +75,7 @@ run's baseline — so the comment thread is the complete history. See
 | `baseline-branch` | — | Store the baseline on a dedicated orphan branch (e.g. `rl-protect-baseline`) instead of the scanned branch — use when the scanned branch is protected |
 | `commit-baseline` | `true` | Commit + push the updated baseline. If `false`, persist the rewritten baseline yourself — against a stale baseline every run repeats the same alerts and the issue's cumulative stats reset to a single-run snapshot |
 | `notify` | `issue` | `issue` / `none` (job summary is always written) |
-| `issue-label` | `rl-protect-monitor` | Label of the rolling issue |
+| `issue-label` | `rl-protect-monitor` | Label of the rolling issue. Cannot be `rl-protect-malware`, which marks the malware bucket's own issue |
 | `alert-on-first-run` | `false` | Alert on all findings when no baseline exists |
 | `fail-on` | `never` | `never` / `critical` / `any-new`. A monitor should not gate — evaluated *after* notifications and baseline commit |
 | `heartbeat-url` | — | Ping URL (e.g. healthchecks.io) hit after each successful run |
@@ -104,7 +104,7 @@ the uploaded artifact holding it).
   when the monitor *stops running*.
 - **Quota**: Community accounts are metered in monthly entitlement units.
   The action checks `rl-protect server list` after each scan and warns in
-  the job summary at ≥80% usage. Daily cadence is plenty; the database
+  the job summary at ≥85% usage. Daily cadence is plenty; the database
   doesn't update faster than that.
 - **Ecosystems**: whatever rl-protect supports — npm, PyPI, RubyGems.
   Modern `yarn.lock` (Yarn 2+) is not supported by rl-protect.

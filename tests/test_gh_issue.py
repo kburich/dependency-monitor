@@ -67,6 +67,11 @@ def flag(argv, name):
     return argv[argv.index(name) + 1]
 
 
+def label_creates(fake):
+    """`gh label create …` argv lists, in call order."""
+    return [c for c in fake.calls if c[:3] == ["gh", "label", "create"]]
+
+
 @pytest.fixture
 def outputs(tmp_path):
     (tmp_path / "issue.title").write_text(
@@ -96,6 +101,20 @@ def notify(monkeypatch, fake, outputs, labels=("rl-protect-monitor",),
         argv += ["--exclude-label", label]
     assert gh_issue.run(argv) == rc
     return fake
+
+
+class TestLabelCreation:
+    def test_every_label_is_created(self, monkeypatch, outputs):
+        fake = notify(monkeypatch, FakeGh(open_number=1), outputs,
+                      labels=("rl-protect-malware", "rl-protect-monitor"))
+        assert [c[3] for c in label_creates(fake)] == ["rl-protect-malware",
+                                                       "rl-protect-monitor"]
+
+    def test_an_existing_label_is_not_overwritten(self, monkeypatch, outputs):
+        """`--force` makes this an upsert, which resets a maintainer's own
+        colour and description on every notifying run."""
+        fake = notify(monkeypatch, FakeGh(open_number=1), outputs)
+        assert not any("--force" in cmd for cmd in label_creates(fake))
 
 
 class TestExistingIssue:
@@ -284,6 +303,36 @@ class TestBucketIsolation:
                       outputs,
                       labels=("rl-protect-malware", "rl-protect-monitor"))
         assert fake.call("edit")[3] == "2"
+
+
+class TestLookupPaging:
+    """The lookup reads one page of labelled issues. A rolling issue past the
+    end of it reads as absent, and the caller opens a duplicate of the thread
+    already holding the bucket's history — so a full page has to say so."""
+
+    def test_the_lookup_asks_for_the_full_page(self, monkeypatch, outputs):
+        fake = notify(monkeypatch, FakeGh(open_number=1), outputs)
+        assert (int(flag(fake.call("list"), "--limit"))
+                == gh_issue.ISSUE_LOOKUP_LIMIT)
+
+    def test_a_full_page_of_excluded_issues_warns_before_duplicating(
+            self, monkeypatch, outputs, capsys):
+        # Every issue carries the marker *and* the exclusion, so the page
+        # fills without a match — the bucket's own issue could be just past.
+        crowd = [(n, ["rl-protect-monitor", "rl-protect-malware"])
+                 for n in range(gh_issue.ISSUE_LOOKUP_LIMIT, 0, -1)]
+        fake = notify(monkeypatch, FakeGh(open_issues=crowd), outputs,
+                      exclude=("rl-protect-malware",))
+        assert "create" in fake.verbs()
+        assert "::warning::" in capsys.readouterr().err
+
+    def test_a_partial_page_creates_without_warning(self, monkeypatch,
+                                                    outputs, capsys):
+        """The page was not full, so "no match" is the whole truth."""
+        fake = notify(monkeypatch, FakeGh(open_issues=[MALWARE_ISSUE]),
+                      outputs, exclude=("rl-protect-malware",))
+        assert "create" in fake.verbs()
+        assert "::warning::" not in capsys.readouterr().err
 
 
 class BadCreateOutputGh(FakeGh):

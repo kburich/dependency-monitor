@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
 from .diff import Delta, diff
-from .normalize import Finding, normalize, scan_metadata
+from .normalize import Finding, coerce_count, normalize, scan_metadata
 from .render import (issue_title, render_issue_body, render_issue_comment,
                      render_summary)
 
@@ -48,16 +48,53 @@ class Baseline:
     payload: Dict = field(default_factory=dict)
 
 
+def _finding_record(record) -> Optional[Finding]:
+    """A baseline finding record, or None if it is too malformed to use.
+
+    Only the three fields that make up the key are required, and only as
+    strings: `split_purl` calls `.partition` on the purl, and a non-string
+    part would raise on the mixed-type comparisons the key is sorted and
+    matched by. Everything else already heals (`coerce_count`,
+    `_normalize_status`), so a record past this check cannot raise.
+    """
+    if not isinstance(record, dict):
+        return None
+    if not all(isinstance(record.get(k), str)
+               for k in ("purl", "category", "id")):
+        return None
+    return Finding.from_dict(record)
+
+
 def load_baseline(path: Path) -> Optional[Baseline]:
-    """Read the baseline, or None if none exists yet."""
+    """Read the baseline, or None if none exists yet.
+
+    Unreadable finding records are dropped rather than raised on, matching
+    how the stats in the same file heal: one hand-edited record must not
+    leave the monitor dead until someone notices. Dropping errs the safe way
+    — a missing baseline record makes its finding look new, so it alerts
+    again rather than going quiet.
+    """
     if not path.exists():
         return None
     with open(path) as fh:
         data = json.load(fh)
-    records = data.get("findings") or []
-    findings = [Finding.from_dict(d) for d in records]
-    alerted = {f.key for f, record in zip(findings, records)
-               if record.get("alerted")}
+    if not isinstance(data, dict):
+        data = {}
+    records = data.get("findings")
+    findings: List[Finding] = []
+    alerted: Set[Key] = set()
+    dropped = 0
+    for record in records if isinstance(records, list) else []:
+        finding = _finding_record(record)
+        if finding is None:
+            dropped += 1
+            continue
+        findings.append(finding)
+        if record.get("alerted"):
+            alerted.add(finding.key)
+    if dropped:
+        print(f"Dropped {dropped} unreadable finding record(s) from {path} — "
+              "whatever they held will alert again as new", file=sys.stderr)
     if not alerted:
         alerted = _legacy_alerted(data)
     stats = data.get("stats")
@@ -85,17 +122,6 @@ def _legacy_alerted(data: Dict) -> Set[Key]:
     return keys
 
 
-def _count(value) -> int:
-    # Corrupt stats heal to 0 like every other malformed-stats shape does —
-    # a mangled cosmetic counter must not take down the whole alerting run.
-    # OverflowError included: json.load accepts the non-standard `Infinity`
-    # literal, and int() on the resulting float raises it rather than ValueError.
-    try:
-        return int(value or 0)
-    except (TypeError, ValueError, OverflowError):
-        return 0
-
-
 def _is_key(entry) -> bool:
     """Whether a schema-1 `alerted` entry still has `Finding.key`'s shape.
 
@@ -110,7 +136,7 @@ def _is_key(entry) -> bool:
 
 def _bucket(raw) -> Dict:
     raw = raw if isinstance(raw, dict) else {}
-    return {k: _count(raw.get(k))
+    return {k: coerce_count(raw.get(k))
             for k in ("runs", "new", "changed", "resolved")}
 
 
@@ -262,8 +288,6 @@ def run(argv: Optional[List[str]] = None) -> int:
                         help="Treat all findings as new when no baseline exists")
     parser.add_argument("--run-url", default=os.environ.get("MONITOR_RUN_URL", ""),
                         help="Workflow run URL to link from issue bodies")
-    parser.add_argument("--quota-note", default="",
-                        help="Optional quota warning appended to the summary")
     args = parser.parse_args(argv)
 
     with open(args.report) as fh:
@@ -300,8 +324,7 @@ def run(argv: Optional[List[str]] = None) -> int:
         json.dump(delta.to_dict(), fh, indent=2)
         fh.write("\n")
 
-    summary_md = render_summary(delta, manifest, first_run=first_run,
-                                quota_note=args.quota_note or None)
+    summary_md = render_summary(delta, manifest, first_run=first_run)
     summary_path = args.out_dir / "summary.md"
     summary_path.write_text(summary_md)
     _github_step_summary(summary_md)

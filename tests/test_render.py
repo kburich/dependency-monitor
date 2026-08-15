@@ -7,6 +7,7 @@ from monitor.render import (
     MAX_PACKAGES_PER_ROW,
     MAX_ROWS_ISSUE,
     _clip,
+    _unclosed_details,
     render_issue_body,
     render_issue_comment,
     render_summary,
@@ -156,6 +157,16 @@ class TestUntrustedFindingText:
         row = [r for r in rows(render_issue_comment(delta, critical=False))
                if r.startswith("| `pkg:npm/b")][0]
         assert row.count("|") - row.count("\\|") - 1 == 6
+
+    def test_a_details_tag_in_a_purl_does_not_unbalance_the_count(self):
+        """`_clip` counts tags on the raw string, so a purl carrying the
+        closing tag would make an open block look closed — and the
+        truncation notice would land inside the collapse."""
+        delta = Delta(new=[cve("pkg:npm/b</details>@1")])
+        comment = render_issue_comment(delta, critical=False)
+        assert comment.count("<details>") == 1
+        assert comment.count("</details>") == 1
+        assert _unclosed_details(comment) == 0
 
 
 class TestIssueBody:

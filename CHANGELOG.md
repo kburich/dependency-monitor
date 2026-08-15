@@ -8,6 +8,85 @@ Consumers pin the floating major tag (`@v1`), which always points at the
 newest release in the `1.x` line. Pin an exact tag (`@v1.0.0`) if you need
 behaviour to stay frozen.
 
+## [Unreleased]
+
+### Changed
+
+- The entitlement-quota warning now fires at ≥85% usage instead of ≥80%,
+  for both the workflow annotation and the job-summary line. It also names
+  upgrading from a Community account alongside reducing scan cadence and
+  narrowing `check-deps` scope.
+- The action's labels are created if missing and then left alone. They were
+  created with `--force`, an upsert that reset the colour and description on
+  every notifying run — so restyling a label to fit your own scheme, or
+  describing it for your team, was silently reverted by the next scan. How
+  the labels look is now yours; only their names matter to the action.
+
+### Added
+
+- Input validation, as the action's first step so a misconfiguration costs
+  no entitlement units. `issue-label: rl-protect-malware` is now rejected
+  with a clear error: that label marks the malware bucket's rolling issue,
+  and the standard bucket's lookup excludes it, so pointing `issue-label` at
+  it made every candidate issue excluded — the standard bucket never
+  resolved its rolling issue and opened a new one on every run.
+
+### Fixed
+
+- The heartbeat is now pinged before the `fail-on` gate is evaluated, not
+  after. It reports that the monitor *ran*, not that it found nothing, so
+  running it after the gate skipped the ping on exactly the runs that
+  worked: `fail-on: critical` plus a real malware finding exited the job
+  before the ping, and the healthcheck raised a dead-monitor alert on top of
+  the malware issue. Only `fail-on: critical` or `any-new` combined with
+  `heartbeat-url` was affected; the default `fail-on: never` never reached
+  the exit.
+- A non-numeric `count` in a scan report or a baseline no longer crashes the
+  run. Counts came straight from `int()`, so one malformed value from the
+  vendor's report — or a hand-edited baseline — raised `ValueError` and took
+  down the whole alerting run. They now heal to 0, matching how the stats
+  counters have always behaved. 0 can never read as an escalation, so a
+  corrupt count under-alerts rather than pages falsely.
+- A malformed finding record in the baseline no longer kills the run. A
+  record missing `purl`, `category`, or `id` — or holding a non-string one,
+  or not an object at all — raised straight out of the baseline read, before
+  any output was written, so a single hand-edit left the monitor dead and
+  silent. Such records are now dropped with a note on stderr, and a baseline
+  that is not a JSON object at all is treated as absent. Dropping errs the
+  safe way: the finding looks new on the next run and alerts again.
+- The rolling-issue lookup now scans 100 labelled issues instead of 30, and
+  says so when it fills a page without a match. Only the newest page is
+  read, so a repo where `issue-label` is also used on hand-filed issues
+  could push a bucket's rolling issue past the end of it — the lookup then
+  reported no open issue and a duplicate was opened silently, orphaning the
+  thread that held the history. It still opens one (a visible duplicate
+  beats a dead notification path), but now emits a `::warning::` naming the
+  cause.
+- An unusable CVSS base score no longer crashes rendering. The score went
+  from the report to `f"{score:.1f}"` unchecked, so a non-numeric one raised
+  `TypeError` while building the issue body. Such scores now read as unknown
+  and render as "—", the same as a finding the report scored not at all —
+  deliberately not 0.0, which would print a reassuring score beside a real
+  CVE. Numeric strings are still accepted; `true`, `Infinity`, and `NaN` are
+  not. Scores are excluded from finding identity, so nothing about which
+  findings alert changes.
+- The baseline commit can no longer be lost silently. `git pull --rebase ||
+  true` swallowed a conflict, which left HEAD detached at the upstream
+  commit — the following push then sent origin its own tip back and exited
+  0, so the step went green while the baseline never landed and the next run
+  re-alerted everything it had already reported. The step now pushes first
+  (so an uncontended run never rewrites history), rebases and retries only
+  on rejection, and fails loudly if the rebase cannot be completed. Affected
+  only the default mode, where the baseline lives on the scanned branch;
+  `baseline-branch` mode builds its commit in a separate worktree and never
+  rebased.
+- Angle brackets in a package purl are substituted before it is rendered
+  into a code-span table cell. GitHub escapes a tag inside a code span, so
+  nothing rendered as HTML — but the clipping guard counts `<details>` tags
+  on the raw text, and a purl carrying the closing tag made an open block
+  look closed. An oversized body could then be truncated with its "body
+  truncated" notice hidden inside the collapsed block.
+
 ## [1.3.0] - 2026-08-12
 
 The rolling issues change shape: the body becomes a cumulative-stats landing
@@ -29,6 +108,14 @@ upgrading, when the baseline adopts its `stats` block.
 - Creating a rolling issue now also posts the first delta comment, so the
   body's pointer at the newest comment holds from the issue's first minute
   (at the cost of a second notification on that first alert).
+- **Baseline schema 2.** The set of finding keys that have alerted moved out
+  of `stats.*.alerted` and onto the finding records themselves, as an
+  `alerted: true` flag. The old parallel list duplicated the key of a record
+  already in the file: on a 1239-finding scan it added ~122 KB (a 24% larger
+  baseline) and a 6,213-line `stats` block, so a routine lockfile bump
+  produced a multi-thousand-line diff hunk. It is now 15 lines. Existing
+  schema-1 baselines are migrated automatically on the next run — one extra
+  commit, and nothing already alerted is forgotten.
 
 ### Added
 
@@ -44,17 +131,6 @@ upgrading, when the baseline adopts its `stats` block.
   only those). They move only when findings change, so the "no commit churn
   on quiet runs" guarantee from 1.1.0 holds. Deleting or regenerating the
   baseline resets them.
-
-### Changed
-
-- **Baseline schema 2.** The set of finding keys that have alerted moved out
-  of `stats.*.alerted` and onto the finding records themselves, as an
-  `alerted: true` flag. The old parallel list duplicated the key of a record
-  already in the file: on a 1239-finding scan it added ~122 KB (a 24% larger
-  baseline) and a 6,213-line `stats` block, so a routine lockfile bump
-  produced a multi-thousand-line diff hunk. It is now 15 lines. Existing
-  schema-1 baselines are migrated automatically on the next run — one extra
-  commit, and nothing already alerted is forgotten.
 
 ### Fixed
 

@@ -347,6 +347,7 @@ class TestRewriteContract:
 
 LODASH = ("pkg:npm/lodash", "hardening", "hardening")
 NEW_CVE = ("pkg:npm/ua-parser-js", "vulnerabilities", "CVE-2022-25927")
+OLD_CVE = ("pkg:npm/ua-parser-js", "vulnerabilities", "CVE-2021-27292")
 
 
 def write_schema_1_baseline(tmp_path, alerted_entries):
@@ -393,6 +394,40 @@ def test_malformed_alerted_entries_are_dropped_instead_of_crashing(env):
     assert invoke(tmp_path, "report_new_cve.json", out_dir="out2") == 0
     # the valid legacy key survived; the new CVE alerted this run
     assert alerted_keys(tmp_path) == sorted([LODASH, NEW_CVE])
+
+
+def test_malformed_finding_records_are_dropped_instead_of_crashing(env, capsys):
+    """A record missing a key field, or holding a non-string one, used to
+    raise straight out of load_baseline — killing the run before any output
+    was written, on a file the monitor writes itself and a human may edit."""
+    tmp_path, _ = env
+    invoke(tmp_path, "report_baseline.json", extra=["--alert-on-first-run"],
+           out_dir="out1")
+    path = tmp_path / ".rl-protect" / "baseline.json"
+    data = json.loads(path.read_text())
+    data["findings"] += [
+        {"category": "hardening", "id": "hardening"},        # no purl
+        {"purl": 42, "category": "hardening", "id": "x"},    # purl not a str
+        {"purl": "pkg:npm/a@1", "category": "hardening"},    # no id
+        "not a record",                                      # not even a dict
+    ]
+    path.write_text(json.dumps(data))
+
+    assert invoke(tmp_path, "report_new_cve.json", out_dir="out2") == 0
+    assert "Dropped 4 unreadable finding record(s)" in capsys.readouterr().err
+    # The intact records still carry their history: everything the first run
+    # alerted on stays alerted, and the new CVE joins it.
+    assert alerted_keys(tmp_path) == sorted([LODASH, OLD_CVE, NEW_CVE])
+
+
+def test_a_baseline_that_is_not_an_object_is_treated_as_empty(env):
+    tmp_path, _ = env
+    invoke(tmp_path, "report_baseline.json", out_dir="out1")
+    path = tmp_path / ".rl-protect" / "baseline.json"
+    path.write_text(json.dumps(["not", "an", "object"]))
+
+    assert invoke(tmp_path, "report_baseline.json", out_dir="out2") == 0
+    assert baseline_payload(tmp_path)["schema"] == 2
 
 
 def test_backlog_resolution_is_not_counted_as_resolved(env):

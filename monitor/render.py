@@ -52,10 +52,18 @@ def _code_cell(value) -> str:
     """Report-supplied text, made safe inside a `code span` table cell.
 
     A code span renders HTML literally, so entity-escaping would show the
-    reader `&lt;` instead of `<`. Only the backtick that would end the span
-    early, and the pipe GitHub splits columns on even inside code, matter.
+    reader `&lt;` instead of `<`; angle brackets are substituted the way the
+    backtick that would end the span early already is. GitHub does escape a
+    tag inside a code span, so this is not about injection — it is that
+    `_unclosed_details` counts tags on the raw string, and a purl carrying
+    `</details>` makes an open block look closed. `_clip` would then leave
+    the truncation notice hidden inside the collapsed block, the one failure
+    it exists to prevent. The pipe is escaped because GitHub splits columns
+    on it even inside code.
     """
-    text = " ".join(str(value).split()).replace("`", "'").replace("|", "\\|")
+    text = " ".join(str(value).split())
+    for bad, safe in (("`", "'"), ("<", "‹"), (">", "›"), ("|", "\\|")):
+        text = text.replace(bad, safe)
     return f"`{text}`"
 
 
@@ -194,9 +202,13 @@ def _clip(body: str, limit: int = GITHUB_BODY_LIMIT) -> str:
     return keep + closer * _unclosed_details(keep) + notice
 
 
-def render_summary(delta: Delta, manifest: str, first_run: bool = False,
-                   quota_note: Optional[str] = None) -> str:
-    """Markdown for the GitHub Actions job summary."""
+def render_summary(delta: Delta, manifest: str, first_run: bool = False) -> str:
+    """Markdown for the GitHub Actions job summary.
+
+    The quota warning is not rendered here: it is measured by a later step in
+    action.yml, after this summary has been written, and that step appends
+    its own line to $GITHUB_STEP_SUMMARY.
+    """
     lines = ["# rl-protect monitor", "", f"Manifest: `{manifest}`", ""]
 
     if first_run:
@@ -232,9 +244,6 @@ def render_summary(delta: Delta, manifest: str, first_run: bool = False,
         f"Resolved: **{counts['resolved']}** · Critical alerts: **{counts['new_critical']}**",
         "",
     ]
-
-    if quota_note:
-        lines += [f"> {quota_note}", ""]
 
     return "\n".join(lines)
 

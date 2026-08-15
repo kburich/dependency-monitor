@@ -22,6 +22,7 @@ the diff, not as new identities).
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -57,6 +58,43 @@ def split_purl(purl: str) -> Tuple[str, str]:
     if not at or "/" in version:
         return purl, ""
     return base + suffix, version
+
+
+def coerce_count(value: Any) -> int:
+    """Coerce any JSON-supplied counter to an int, healing junk to 0.
+
+    Every counter this action reads — finding counts in the vendor's report,
+    and both finding counts and cumulative stats in a baseline on disk —
+    arrives as arbitrary JSON, so a bare int() turns one mangled value into a
+    crashed alerting run. 0 is the safe heal: a mangled cosmetic counter must
+    not take down the run, and 0 can never read as an escalation, so a
+    corrupt count under-alerts rather than pages falsely. OverflowError
+    included: json.load accepts the non-standard `Infinity` literal, and
+    int() on the resulting float raises it, not ValueError.
+    """
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def coerce_score(value: Any) -> Optional[float]:
+    """Coerce a CVSS base score to a float, or None if it is not usable.
+
+    Unlike a count, a corrupt score must not heal to 0.0 — that renders as a
+    reassuring 0.0 beside a real CVE. None is the honest heal: it renders as
+    "—", exactly like a finding the report gave no score for. Unknown, not
+    benign. `bool` is rejected before float() would turn JSON's `true` into
+    1.0, and non-finite values are dropped because json.load accepts the
+    non-standard `Infinity` and `NaN` literals, which format as "inf"/"nan".
+    """
+    if isinstance(value, bool):
+        return None
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return None
+    return score if math.isfinite(score) else None
 
 
 def _normalize_status(raw: Any) -> str:
@@ -116,9 +154,9 @@ class Finding:
             category=d["category"],
             finding_id=d["id"],
             status=_normalize_status(d.get("status")),
-            count=int(d.get("count", 0) or 0),
+            count=coerce_count(d.get("count")),
             title=d.get("title", ""),
-            score=d.get("score"),
+            score=coerce_score(d.get("score")),
         )
 
 
@@ -142,7 +180,7 @@ def normalize(report: Dict[str, Any]) -> List[Finding]:
             status = _normalize_status(entry.get("status"))
             if status == "pass":
                 continue
-            count = int(entry.get("count", 0) or 0)
+            count = coerce_count(entry.get("count"))
             label = str(entry.get("label", "") or "")
 
             if category == "vulnerabilities":
@@ -150,8 +188,9 @@ def normalize(report: Dict[str, Any]) -> List[Finding]:
                 if isinstance(details, dict) and details:
                     for vuln_id, vd in sorted(details.items()):
                         vd = vd if isinstance(vd, dict) else {}
-                        score = ((vd.get("cvss") or {}).get("baseScore")
-                                 if isinstance(vd.get("cvss"), dict) else None)
+                        score = coerce_score(
+                            vd["cvss"].get("baseScore")
+                            if isinstance(vd.get("cvss"), dict) else None)
                         findings.append(Finding(
                             purl=purl,
                             category=category,

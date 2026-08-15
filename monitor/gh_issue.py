@@ -67,13 +67,29 @@ def _nonempty_path(value: str) -> Path:
 
 
 def _ensure_labels(repo: str, labels: List[str]) -> None:
+    """Create each label if it does not exist yet, and otherwise leave it be.
+
+    Deliberately without `--force`, which is an upsert: it reset the colour
+    and description on every notifying run, so a maintainer who restyled a
+    label to fit their scheme — or described it for their team — had the
+    change silently reverted by the next scan. Creation is the only thing
+    this action needs; how the label looks afterwards is the repo's own.
+    `gh` exits nonzero when the label already exists, which is the expected
+    steady state and is what `check=False` is swallowing.
+    """
     for label in labels:
         subprocess.run(
             ["gh", "label", "create", label, "--repo", repo,
-             "--color", "D93F0B", "--force",
+             "--color", "D93F0B",
              "--description", "Managed by rl-protect-monitor"],
             check=False, capture_output=True, text=True,
         )
+
+
+#: How many labelled issues the rolling-issue lookup scans. The action keeps
+#: two, but `issue-label` is the consumer's own label and may be shared with
+#: hand-filed issues, so the page has to hold more than the action's own.
+ISSUE_LOOKUP_LIMIT = 100
 
 
 def _find_open_issue(repo: str, label: str,
@@ -86,16 +102,30 @@ def _find_open_issue(repo: str, label: str,
     and overwriting its title and stats body. Excluding the other bucket's
     marker keeps the two threads apart; filtering here rather than in the
     query keeps it to one `gh` call, since `gh issue list --label` is an AND
-    and has no negative form.
+    and has no negative form. The alternative, `--search` with a negative
+    `-label:`, is served by the search index, which lags behind writes — the
+    post-creation lookup below re-reads an issue made seconds earlier, so it
+    needs the strongly consistent list endpoint.
     """
     out = _gh(["issue", "list", "--repo", repo, "--state", "open",
-               "--label", label, "--json", "number,labels", "--limit", "30"])
+               "--label", label, "--json", "number,labels",
+               "--limit", str(ISSUE_LOOKUP_LIMIT)])
     issues = json.loads(out or "[]")
     excluded = set(exclude or ())
     for issue in issues:
         names = {lb.get("name") for lb in issue.get("labels") or []}
         if not (names & excluded):
             return issue["number"]
+    if len(issues) >= ISSUE_LOOKUP_LIMIT:
+        # Every issue on a full page was excluded, so this bucket's rolling
+        # issue may be just past the end of it and the caller is about to
+        # open a second one. Say so: a silent duplicate looks like the
+        # action deciding to re-open, and the original keeps its history.
+        print(f"::warning::Scanned {len(issues)} open issues labeled "
+              f"{label} without finding this bucket's rolling issue. If one "
+              "exists beyond that, a duplicate is about to be opened — "
+              "reserve the label for this action, or close stale issues.",
+              file=sys.stderr)
     return None
 
 
