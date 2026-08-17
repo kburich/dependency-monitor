@@ -1,9 +1,11 @@
 """Create or update the rolling notification issue via the `gh` CLI.
 
 One open issue per severity bucket, identified by its first (marker) label.
-The critical bucket's issue carries the shared issue-label as well, so the
-standard bucket passes `--exclude-label rl-protect-malware` to keep its
-lookup from resolving to the malware incident. The body is the
+Markers are per monitor and per bucket — `rl-protect-monitor/<id>` and
+`rl-protect-malware/<id>`, derived in `monitor.identity` — so a lookup can
+never resolve to the other bucket's thread or to another monitor's. The
+issue carries the bare `rl-protect-monitor` / `rl-protect-malware` labels too,
+but only for humans to filter on. The body is the
 issue's landing page — cumulative stats, edited to current on every alert —
 while each run's delta is posted as a comment (comments notify subscribers;
 body edits do not). Each delta is measured against the baseline the previous
@@ -26,7 +28,8 @@ Usage:
         --title-file out/issue_critical.title \
         --body-file out/issue_critical.md \
         --comment-file out/issue_critical_comment.md \
-        --label rl-protect-monitor --label rl-protect-malware
+        --label rl-protect-malware/package-lock.json \
+        --label rl-protect-malware --label rl-protect-monitor
 
 Requires GH_TOKEN in the environment with `issues: write`.
 """
@@ -86,47 +89,18 @@ def _ensure_labels(repo: str, labels: List[str]) -> None:
         )
 
 
-#: How many labelled issues the rolling-issue lookup scans. The action keeps
-#: two, but `issue-label` is the consumer's own label and may be shared with
-#: hand-filed issues, so the page has to hold more than the action's own.
-ISSUE_LOOKUP_LIMIT = 100
+def _find_open_issue(repo: str, label: str) -> Optional[int]:
+    """Newest open issue carrying the marker `label`, or None.
 
-
-def _find_open_issue(repo: str, label: str,
-                     exclude: Optional[List[str]] = None) -> Optional[int]:
-    """Newest open issue carrying `label` and none of `exclude`.
-
-    The critical bucket's issue also carries the shared issue-label, so a
-    lookup by that label alone can resolve the standard bucket's rolling
-    issue to the malware incident — posting standard deltas into that thread
-    and overwriting its title and stats body. Excluding the other bucket's
-    marker keeps the two threads apart; filtering here rather than in the
-    query keeps it to one `gh` call, since `gh issue list --label` is an AND
-    and has no negative form. The alternative, `--search` with a negative
-    `-label:`, is served by the search index, which lags behind writes — the
-    post-creation lookup below re-reads an issue made seconds earlier, so it
-    needs the strongly consistent list endpoint.
+    The marker names one bucket of one monitor, so the newest match *is* the
+    answer and one row is enough. `gh issue list` is the strongly consistent
+    endpoint, which matters because the post-creation lookup below re-reads an
+    issue made seconds earlier — the search index lags behind writes.
     """
     out = _gh(["issue", "list", "--repo", repo, "--state", "open",
-               "--label", label, "--json", "number,labels",
-               "--limit", str(ISSUE_LOOKUP_LIMIT)])
+               "--label", label, "--json", "number", "--limit", "1"])
     issues = json.loads(out or "[]")
-    excluded = set(exclude or ())
-    for issue in issues:
-        names = {lb.get("name") for lb in issue.get("labels") or []}
-        if not (names & excluded):
-            return issue["number"]
-    if len(issues) >= ISSUE_LOOKUP_LIMIT:
-        # Every issue on a full page was excluded, so this bucket's rolling
-        # issue may be just past the end of it and the caller is about to
-        # open a second one. Say so: a silent duplicate looks like the
-        # action deciding to re-open, and the original keeps its history.
-        print(f"::warning::Scanned {len(issues)} open issues labeled "
-              f"{label} without finding this bucket's rolling issue. If one "
-              "exists beyond that, a duplicate is about to be opened — "
-              "reserve the label for this action, or close stale issues.",
-              file=sys.stderr)
-    return None
+    return issues[0]["number"] if issues else None
 
 
 def run(argv: Optional[List[str]] = None) -> int:
@@ -145,10 +119,6 @@ def run(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--label", action="append", required=True,
                         dest="labels", help="May be given multiple times; "
                         "the first label identifies the rolling issue")
-    parser.add_argument("--exclude-label", action="append", default=[],
-                        dest="exclude_labels", help="Never treat an issue "
-                        "carrying this label as this bucket's rolling issue, "
-                        "even if it also carries the marker label")
     args = parser.parse_args(argv)
     # Exactly one of the two: silently falling back to the body would post
     # the stats page as the delta comment, and a delta with no comment at all
@@ -161,7 +131,7 @@ def run(argv: Optional[List[str]] = None) -> int:
     marker_label = args.labels[0]
 
     _ensure_labels(args.repo, args.labels)
-    number = _find_open_issue(args.repo, marker_label, args.exclude_labels)
+    number = _find_open_issue(args.repo, marker_label)
 
     if args.body_only:
         if number is None:
@@ -190,8 +160,7 @@ def run(argv: Optional[List[str]] = None) -> int:
         if not tail.isdigit():
             print("Could not parse the new issue's number from `gh issue "
                   "create` output — looking it up by label", file=sys.stderr)
-            number = _find_open_issue(args.repo, marker_label,
-                                      args.exclude_labels)
+            number = _find_open_issue(args.repo, marker_label)
             if number is None:
                 print(f"No open issue labeled {marker_label} found after "
                       "creation — delta comment not posted", file=sys.stderr)

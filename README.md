@@ -3,7 +3,8 @@
 GitHub Action that periodically re-scans your dependency manifest with
 [ReversingLabs rl-protect](https://docs.secure.software/) and alerts you —
 via GitHub Issues — **only when something changes**: a new malware verdict,
-a new CVE, a worsened finding, or a resolved one.
+a new CVE, or a worsened finding. Resolutions update the issue quietly,
+without notifying.
 
 ## Why a monitor?
 
@@ -15,10 +16,16 @@ malware tomorrow when the database is updated (as happened with
 catches bad packages *entering* your project; this monitor catches packages
 that *go bad after* they're already in.
 
-The core is a **delta engine**: each run is diffed against a baseline
-committed to your repo (`.rl-protect/baseline.json`), and you're only
-notified about changes — never re-spammed about known findings. The baseline's
-git history doubles as an audit trail of exactly when a package went bad.
+The core is a **delta engine**: each run is diffed against a baseline the
+action commits for you, and you're only notified about changes — never
+re-spammed about known findings. The baseline's git history doubles as an
+audit trail of exactly when a package went bad. It lives on its own orphan
+branch (`rl-protect-baseline/<monitor>`), so your default branch's history
+stays clean and its protection rules stay untouched.
+
+The monitor runs on your **default branch** — GitHub fires scheduled
+workflows nowhere else, and periodic re-scanning is the whole point. Runs
+triggered on another branch are rejected with an error.
 
 ## Quick start
 
@@ -35,7 +42,7 @@ on:
   workflow_dispatch: {}
 jobs:
   monitor:
-    uses: kburich/rl-protect-monitor/.github/workflows/monitor.yml@v1
+    uses: kburich/rl-protect-monitor/.github/workflows/monitor.yml@v2
     permissions:
       contents: write   # commit the baseline back
       issues: write     # open/update notification issues
@@ -71,11 +78,12 @@ run's baseline — so the comment thread is the complete history. See
 | `manifest-path` | auto-detect | Lockfiles preferred: `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock` (classic), `poetry.lock`, `uv.lock`, `requirements.txt`, `Gemfile.lock`, then manifests |
 | `scan-profile` | `baseline` | `minimum` / `baseline` / `hardened`. `hardened` is deliberately strict — good for PR gating, noisy for a monitor |
 | `check-deps` | `release,develop,transitive` | Passed to `rl-protect scan --check-deps` |
-| `baseline-path` | `.rl-protect/baseline.json` | Committed findings baseline |
-| `baseline-branch` | — | Store the baseline on a dedicated orphan branch (e.g. `rl-protect-baseline`) instead of the scanned branch — use when the scanned branch is protected |
+| `baseline-path` | `.rl-protect/baseline.json` | Path the baseline is stored at, within whichever branch holds it |
+| `monitor-id` | `auto` | Names this monitor's baseline branch and rolling issues; derived from the manifest so two monitors in one repo stay apart. Set it to separate two monitors on the same manifest |
+| `baseline-branch` | `auto` | `auto` → `rl-protect-baseline/<monitor-id>`, an orphan branch your default branch's protection doesn't cover. A name uses that branch; empty commits the baseline to the default branch, where it shows up in PR diffs but needs direct pushes to be allowed |
 | `commit-baseline` | `true` | Commit + push the updated baseline. If `false`, persist the rewritten baseline yourself — against a stale baseline every run repeats the same alerts and the issue's cumulative stats reset to a single-run snapshot |
 | `notify` | `issue` | `issue` / `none` (job summary is always written) |
-| `issue-label` | `rl-protect-monitor` | Label of the rolling issue. Cannot be `rl-protect-malware`, which marks the malware bucket's own issue |
+| `issue-label` | `rl-protect-monitor` | Extra label on both rolling issues, for filtering and subscribing. It doesn't identify them — the per-monitor marker label does |
 | `alert-on-first-run` | `false` | Alert on all findings when no baseline exists |
 | `fail-on` | `never` | `never` / `critical` / `any-new`. A monitor should not gate — evaluated *after* notifications and baseline commit |
 | `heartbeat-url` | — | Ping URL (e.g. healthchecks.io) hit after each successful run |
@@ -91,12 +99,17 @@ the uploaded artifact holding it).
 
 ## Operational notes
 
-- **Protected branches**: if your default branch requires PRs, the baseline
-  push will be rejected. Either add the `github-actions` app as a bypass
-  actor in your branch ruleset, or set `baseline-branch: rl-protect-baseline`
-  to keep the baseline on a dedicated orphan branch that `main`'s protection
-  doesn't cover. The scanned branch is never touched in that mode, and the
-  baseline branch keeps its own audit-trail history.
+- **Protected branches**: nothing to do — the default `baseline-branch: auto`
+  keeps the baseline on an orphan branch your default branch's protection
+  doesn't cover, and never touches the scanned branch. Only if you set
+  `baseline-branch: ""` to commit the baseline in-tree do you need the
+  default branch to accept direct pushes (add the `github-actions` app as a
+  bypass actor in your ruleset). That case is checked before scanning, so a
+  protected branch fails with a clear error rather than a rejected push.
+- **One monitor per manifest**: a monitor's baseline branch and its two
+  rolling issues are named after the manifest it scans, so a monorepo can run
+  one job per manifest without them overwriting each other. Two jobs pointed
+  at the *same* manifest need distinct `monitor-id` values.
 - **Cron auto-disable**: GitHub disables scheduled workflows after 60 days
   without repo activity, and cron firing is best-effort. For a security
   monitor that failure mode is silent — set `heartbeat-url` to a

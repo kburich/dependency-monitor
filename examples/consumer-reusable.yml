@@ -10,26 +10,19 @@ on:
   schedule:
     - cron: "0 6 * * *"   # daily; the RL database doesn't update faster than this
   workflow_dispatch: {}    # manual runs + keeps the cron from looking abandoned
-  push:
-    paths:
-      - "package-lock.json"
-      - "pnpm-lock.yaml"
-      - "yarn.lock"
-      - "requirements.txt"
-      - "poetry.lock"
-      - "uv.lock"
-      - "Gemfile.lock"
 
 jobs:
   monitor:
-    uses: kburich/rl-protect-monitor/.github/workflows/monitor.yml@v1
+    uses: kburich/rl-protect-monitor/.github/workflows/monitor.yml@v2
     permissions:
       contents: write
       issues: write
-    # If your default branch is protected (requires PRs), store the baseline
-    # on a dedicated orphan branch instead:
+    # The baseline is kept on its own orphan branch by default, so nothing
+    # here needs branch protection to be relaxed. To commit it into the repo
+    # itself instead — visible in PR diffs, but the default branch must accept
+    # direct pushes:
     # with:
-    #   baseline-branch: rl-protect-baseline
+    #   baseline-branch: ""
     secrets:
       rl-token: ${{ secrets.RL_TOKEN }}
       heartbeat-url: ${{ secrets.HEARTBEAT_URL }}

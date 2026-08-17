@@ -4,11 +4,24 @@ All notable changes to this action are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Consumers pin the floating major tag (`@v1`), which always points at the
-newest release in the `1.x` line. Pin an exact tag (`@v1.0.0`) if you need
+Consumers pin the floating major tag (`@v2`), which always points at the
+newest release in the `2.x` line. Pin an exact tag (`@v2.0.0`) if you need
 behaviour to stay frozen.
 
-## [Unreleased]
+## [2.0.0] - 2026-08-17
+
+The monitor becomes multi-manifest safe, and its durable state moves off your
+default branch. Each monitor — one per manifest — now owns a baseline branch
+and a pair of rolling issues named after the manifest it scans.
+
+**Upgrading from 1.x requires attention.** The baseline moves from
+`.rl-protect/baseline.json` in your repo to the orphan branch
+`rl-protect-baseline/<monitor-id>`, so the first run after upgrading records a
+fresh baseline and the cumulative stats restart. Set `baseline-branch: ""` to
+keep the old in-tree location. Your existing rolling issues are also no longer
+recognised — they carry the old bare labels, while the lookup now uses a
+per-monitor marker — so 2.0.0 opens new ones; close the old threads by hand.
+Workflows triggering the action anywhere but the default branch now fail.
 
 ### Changed
 
@@ -21,15 +34,73 @@ behaviour to stay frozen.
   every notifying run — so restyling a label to fit your own scheme, or
   describing it for your team, was silently reverted by the next scan. How
   the labels look is now yours; only their names matter to the action.
+- The baseline is stored on a dedicated orphan branch by default
+  (`baseline-branch: auto` → `rl-protect-baseline/<monitor-id>`) instead of
+  being committed to the scanned branch. Branch protection no longer needs
+  bypass rules, the default branch's history stays free of bot commits, and
+  the in-tree behaviour remains available as `baseline-branch: ""`.
+- A monitor's rolling issues are identified by a per-monitor, per-bucket
+  marker label (`rl-protect-monitor/<id>`, `rl-protect-malware/<id>`). The
+  malware bucket's marker used to be hardcoded, so every monitor in a repo
+  shared one incident issue — and each overwrote its title and stats body
+  with its own. `issue-label` is now an extra label for filtering and
+  subscribing, not the identifier.
+- The issue body no longer repeats the latest delta. It now shows cumulative
+  monitoring stats — monitoring since, runs with alerts, findings alerted /
+  worsened / resolved, currently outstanding — plus a one-line "latest
+  change" headline pointing at the newest comment, which carries the delta.
+- Delta comments collapse: a visible headline ("New findings: 2 new · 1
+  worsened — 2026-08-12") with the tables inside a `<details>` block, so a
+  long thread scans like a changelog. Notification emails are unaffected:
+  most mail clients ignore `<details>` and render the full delta.
+- Creating a rolling issue now also posts the first delta comment, so the
+  body's pointer at the newest comment holds from the issue's first minute
+  (at the cost of a second notification on that first alert).
+- **Baseline schema 2.** The set of finding keys that have alerted moved out
+  of `stats.*.alerted` and onto the finding records themselves, as an
+  `alerted: true` flag. The old parallel list duplicated the key of a record
+  already in the file: on a 1239-finding scan it added ~122 KB (a 24% larger
+  baseline) and a 6,213-line `stats` block, so a routine lockfile bump
+  produced a multi-thousand-line diff hunk. It is now 15 lines. Existing
+  schema-1 baselines are migrated automatically on the next run — one extra
+  commit, and nothing already alerted is forgotten.
 
 ### Added
 
 - Input validation, as the action's first step so a misconfiguration costs
-  no entitlement units. `issue-label: rl-protect-malware` is now rejected
-  with a clear error: that label marks the malware bucket's rolling issue,
-  and the standard bucket's lookup excludes it, so pointing `issue-label` at
-  it made every candidate issue excluded — the standard bucket never
-  resolved its rolling issue and opened a new one on every run.
+  no entitlement units.
+- The action runs on the default branch only, enforced with an error naming
+  the branch it expected. GitHub fires `schedule:` nowhere else, so a run
+  elsewhere could not be periodic — and would write to the same baseline and
+  issues as the real monitor, silently alternating them.
+- `monitor-id`, identifying a monitor's durable state. Derived from the
+  manifest by default, so a monorepo can run one job per manifest without
+  them overwriting each other's baseline and issues.
+- Opting into an in-tree baseline is checked against the default branch's
+  protection *before* scanning, so it fails with an actionable message rather
+  than a rejected push after entitlement has been spent.
+- The baseline push to a dedicated branch is retried, like the in-tree push
+  already was. Each attempt rebuilds on the branch's current tip and stages
+  only its own path, so a concurrent monitor's commit is preserved.
+- `has-updates` output: true when anything was new, worsened, *or* resolved.
+  The notification step gates on it rather than `has-alerts`, so a
+  resolution-only run still refreshes the issue's stats body.
+- `delta-artifact` output: the name of the uploaded artifact holding the
+  complete, ungrouped `delta.json`.
+- Cumulative counters in the baseline (`stats` block), kept per severity
+  bucket and counting only alerts since monitoring started — the backlog
+  absorbed on the first run is not counted, and neither are its resolutions
+  (each bucket tracks the finding keys it has alerted on; `resolved` counts
+  only those). They move only when findings change, so the "no commit churn
+  on quiet runs" guarantee from 1.1.0 holds. Deleting or regenerating the
+  baseline resets them.
+
+### Removed
+
+- `--exclude-label` on the notifier, along with the lookup's page-scanning
+  and its full-page warning. It existed only because both buckets' issues
+  carried the same identifying label; per-bucket markers are disjoint by
+  construction, so the lookup is now one row by one label.
 
 ### Fixed
 
@@ -54,14 +125,6 @@ behaviour to stay frozen.
   silent. Such records are now dropped with a note on stderr, and a baseline
   that is not a JSON object at all is treated as absent. Dropping errs the
   safe way: the finding looks new on the next run and alerts again.
-- The rolling-issue lookup now scans 100 labelled issues instead of 30, and
-  says so when it fills a page without a match. Only the newest page is
-  read, so a repo where `issue-label` is also used on hand-filed issues
-  could push a bucket's rolling issue past the end of it — the lookup then
-  reported no open issue and a duplicate was opened silently, orphaning the
-  thread that held the history. It still opens one (a visible duplicate
-  beats a dead notification path), but now emits a `::warning::` naming the
-  cause.
 - An unusable CVSS base score no longer crashes rendering. The score went
   from the report to `f"{score:.1f}"` unchecked, so a non-numeric one raised
   `TypeError` while building the issue body. Such scores now read as unknown
@@ -77,69 +140,20 @@ behaviour to stay frozen.
   re-alerted everything it had already reported. The step now pushes first
   (so an uncontended run never rewrites history), rebases and retries only
   on rejection, and fails loudly if the rebase cannot be completed. Affected
-  only the default mode, where the baseline lives on the scanned branch;
-  `baseline-branch` mode builds its commit in a separate worktree and never
-  rebased.
+  only the in-tree mode (`baseline-branch: ""`), where the baseline lives on
+  the scanned branch; a dedicated baseline branch builds its commit in a
+  separate worktree and never rebased.
 - Angle brackets in a package purl are substituted before it is rendered
   into a code-span table cell. GitHub escapes a tag inside a code span, so
   nothing rendered as HTML — but the clipping guard counts `<details>` tags
   on the raw text, and a purl carrying the closing tag made an open block
   look closed. An oversized body could then be truncated with its "body
   truncated" notice hidden inside the collapsed block.
-
-## [1.3.0] - 2026-08-12
-
-The rolling issues change shape: the body becomes a cumulative-stats landing
-page and each delta lives in a collapsible comment, so the latest delta is no
-longer shown twice. No inputs or outputs changed; existing workflows upgrade
-without modification. Expect one extra baseline commit on the first run after
-upgrading, when the baseline adopts its `stats` block.
-
-### Changed
-
-- The issue body no longer repeats the latest delta. It now shows cumulative
-  monitoring stats — monitoring since, runs with alerts, findings alerted /
-  worsened / resolved, currently outstanding — plus a one-line "latest
-  change" headline pointing at the newest comment, which carries the delta.
-- Delta comments collapse: a visible headline ("New findings: 2 new · 1
-  worsened — 2026-08-12") with the tables inside a `<details>` block, so a
-  long thread scans like a changelog. Notification emails are unaffected:
-  most mail clients ignore `<details>` and render the full delta.
-- Creating a rolling issue now also posts the first delta comment, so the
-  body's pointer at the newest comment holds from the issue's first minute
-  (at the cost of a second notification on that first alert).
-- **Baseline schema 2.** The set of finding keys that have alerted moved out
-  of `stats.*.alerted` and onto the finding records themselves, as an
-  `alerted: true` flag. The old parallel list duplicated the key of a record
-  already in the file: on a 1239-finding scan it added ~122 KB (a 24% larger
-  baseline) and a 6,213-line `stats` block, so a routine lockfile bump
-  produced a multi-thousand-line diff hunk. It is now 15 lines. Existing
-  schema-1 baselines are migrated automatically on the next run — one extra
-  commit, and nothing already alerted is forgotten.
-
-### Added
-
-- `has-updates` output: true when anything was new, worsened, *or* resolved.
-  The notification step gates on it rather than `has-alerts`, so a
-  resolution-only run still refreshes the issue's stats body.
-- `delta-artifact` output: the name of the uploaded artifact holding the
-  complete, ungrouped `delta.json`.
-- Cumulative counters in the baseline (`stats` block), kept per severity
-  bucket and counting only alerts since monitoring started — the backlog
-  absorbed on the first run is not counted, and neither are its resolutions
-  (each bucket tracks the finding keys it has alerted on; `resolved` counts
-  only those). They move only when findings change, so the "no commit churn
-  on quiet runs" guarantee from 1.1.0 holds. Deleting or regenerating the
-  baseline resets them.
-
-### Fixed
-
 - The delta comment names the manifest again, and malware comments carry the
   incident guidance. Both moved to the issue body when the delta was split
   into a comment, but the body is edited silently — the comment is what
-  notifies — so the alert email named neither what was scanned (one rolling
-  issue can cover several manifests, and the title is overwritten by
-  whichever ran last) nor why the finding was urgent.
+  notifies — so the alert email named neither what was scanned nor why the
+  finding was urgent.
 - A malformed entry in a baseline's `stats.*.alerted` list no longer takes
   down the run. Entries are validated against the finding-key shape (three
   strings) instead of only being checked for being lists, so a hand-edited or
@@ -148,12 +162,6 @@ upgrading, when the baseline adopts its `stats` block.
   written, so the notify and baseline-commit steps were skipped and a live
   malware finding was silently dropped on every run until someone deleted the
   baseline.
-- The standard bucket no longer adopts the malware issue as its rolling
-  issue. The critical issue carries the shared `issue-label` alongside
-  `rl-protect-malware`, so a lookup by the shared label alone could resolve to
-  it — posting the standard delta into the malware incident thread and
-  replacing its title and counters with the standard bucket's stats page. The
-  standard lookup now excludes issues labeled `rl-protect-malware`.
 - An `Infinity` counter in a baseline's `stats` block heals to 0 like every
   other corrupt value. `json.load` accepts the non-standard literal, and
   `int()` on the resulting float raises `OverflowError` rather than the
@@ -296,8 +304,7 @@ Initial release.
 - `alert-on-first-run` for repositories that want the initial backlog
   reported rather than absorbed into the baseline.
 
-[Unreleased]: https://github.com/kburich/rl-protect-monitor/compare/v1.3.0...HEAD
-[1.3.0]: https://github.com/kburich/rl-protect-monitor/compare/v1.2.0...v1.3.0
+[2.0.0]: https://github.com/kburich/rl-protect-monitor/compare/v1.2.0...v2.0.0
 [1.2.0]: https://github.com/kburich/rl-protect-monitor/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/kburich/rl-protect-monitor/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/kburich/rl-protect-monitor/releases/tag/v1.0.0

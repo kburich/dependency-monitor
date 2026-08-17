@@ -31,14 +31,26 @@ inputs:
     description: Path (in the consumer repo) of the committed findings baseline
     required: false
     default: .rl-protect/baseline.json
+  monitor-id:
+    description: >-
+      Identifies this monitor's durable state — its baseline branch and its
+      two rolling issues. "auto" derives it from the manifest path, which
+      keeps two monitors in one repo (a monorepo scanning a lockfile and a
+      requirements file) from overwriting each other. Set it explicitly to
+      separate two monitors on the same manifest, or to make two share a
+      thread deliberately.
+    required: false
+    default: auto
   baseline-branch:
     description: >-
-      Dedicated branch to store the baseline on (created as an orphan branch
-      on first run). Use when the scanned branch is protected and cannot
-      receive direct pushes. Empty = commit the baseline to the scanned
-      branch itself.
+      Dedicated branch to store the baseline on, created as an orphan branch
+      on first run. "auto" derives rl-protect-baseline/<monitor-id>, which
+      keeps baseline commits out of the scanned branch's history and works
+      unchanged when that branch is protected. A name uses that branch.
+      Empty commits the baseline to the scanned branch itself, where it shows
+      up in PR diffs — that branch must then accept direct pushes.
     required: false
-    default: ""
+    default: auto
   commit-baseline:
     description: >-
       Commit and push the updated baseline (needs contents write). If false,
@@ -53,8 +65,9 @@ inputs:
     default: issue
   issue-label:
     description: >-
-      Label identifying the rolling notification issue. Must not be
-      rl-protect-malware, which marks the malware bucket's own issue.
+      Extra label applied to both buckets' rolling issues, for filtering and
+      subscribing. It does not identify them — that is the per-monitor marker
+      label derived from monitor-id.
     required: false
     default: rl-protect-monitor
   alert-on-first-run:
@@ -112,19 +125,67 @@ runs:
   steps:
     # First, so a misconfiguration costs no entitlement units.
     - name: Validate inputs
+      id: guard
       shell: bash
       env:
-        NOTIFY: ${{ inputs.notify }}
-        ISSUE_LABEL: ${{ inputs.issue-label }}
+        GH_TOKEN: ${{ inputs.github-token }}
+        BASELINE_BRANCH: ${{ inputs.baseline-branch }}
+        COMMIT_BASELINE: ${{ inputs.commit-baseline }}
+        EVENT_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       run: |
-        # rl-protect-malware marks the malware bucket's own rolling issue,
-        # and the standard bucket's lookup excludes it to stay out of that
-        # thread. Pointing issue-label at the same label makes that exclusion
-        # match every issue the lookup returns, so the standard bucket never
-        # resolves its rolling issue and opens a fresh one on every run.
-        if [[ "$NOTIFY" == "issue" && "$ISSUE_LABEL" == "rl-protect-malware" ]]; then
-          echo "::error::issue-label must not be 'rl-protect-malware' — that label marks the malware bucket's rolling issue. Use a different label (default: rl-protect-monitor)."
+        # The branch is not a choice this action offers. GitHub fires
+        # `schedule:` on the default branch only, so no other branch can be
+        # re-scanned periodically — and periodic re-scanning is the whole
+        # point, since the lockfile sits still while the database moves. A
+        # run elsewhere would write to the same baseline and the same issues
+        # as the real monitor, and the symptom is silent: alternating
+        # baselines, each run reporting the other's findings as resolved and
+        # its own as new.
+        SCANNED="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+        if [[ -z "$SCANNED" ]]; then
+          echo "::error::No git checkout found in the workspace. Add actions/checkout before this action — it reads the manifest from the working tree and commits the baseline from it."
           exit 1
+        fi
+        if [[ "$SCANNED" == "HEAD" ]]; then
+          echo "::error::HEAD is detached, so the scanned branch cannot be determined. This action needs a branch checkout — a SHA checkout or a pull_request trigger is not supported."
+          exit 1
+        fi
+        DEFAULT="$EVENT_DEFAULT_BRANCH"
+        if [[ -z "$DEFAULT" ]]; then
+          # The scheduled-event payload carries no repository object.
+          DEFAULT="$(gh api "repos/$GITHUB_REPOSITORY" --jq .default_branch)"
+        fi
+        echo "scanned-branch=$SCANNED" >> "$GITHUB_OUTPUT"
+
+        DRY_RUN=false
+        if [[ "$SCANNED" != "$DEFAULT" ]]; then
+          # Undocumented on purpose: a maintainer testing a change needs to
+          # run it somewhere, and manual dispatch is the only trigger that
+          # cannot fire by accident. It is scoped to a dry run because the
+          # monitor id does not include the branch — an unscoped run here
+          # would post into the real issues and overwrite the real baseline
+          # in order to test them. Do not turn this into an input.
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            DRY_RUN=true
+            echo "::notice::Manual run on '$SCANNED', which is not the default branch ('$DEFAULT') — dry run: the scan, job summary and delta artifact are produced, but no baseline is committed and nothing is posted."
+          else
+            echo "::error::rl-protect-monitor runs on the default branch ('$DEFAULT') only; this run is on '$SCANNED'. Scheduled runs already fire on the default branch — add 'branches: [$DEFAULT]' to your push: trigger."
+            exit 1
+          fi
+        fi
+        echo "dry-run=$DRY_RUN" >> "$GITHUB_OUTPUT"
+
+        # An in-tree baseline is an explicit opt-in whose failure mode is a
+        # rejected push *after* the scan has spent entitlement. Say so now
+        # instead. Best-effort: `protected` does not reflect every ruleset
+        # configuration, so mode 1's push failure stays the backstop.
+        if [[ -z "$BASELINE_BRANCH" && "$DRY_RUN" == "false" \
+              && "$COMMIT_BASELINE" == "true" ]]; then
+          PROTECTED="$(gh api "repos/$GITHUB_REPOSITORY/branches/$DEFAULT" --jq .protected 2>/dev/null || echo unknown)"
+          if [[ "$PROTECTED" == "true" ]]; then
+            echo "::error::baseline-branch is empty, which commits the baseline to '$DEFAULT' — but that branch is protected and will reject the push. Leave baseline-branch at 'auto' to keep the baseline on a dedicated branch instead."
+            exit 1
+          fi
         fi
 
     - uses: actions/setup-python@v5
@@ -168,6 +229,24 @@ runs:
         echo "::error::No supported manifest found; set the manifest-path input"
         exit 1
 
+    # Needs the resolved manifest, and runs before the scan so a bad id costs
+    # no entitlement units. The id names durable state — a baseline branch and
+    # two issue markers — so it is derived in Python, where the slugging and
+    # the label-length cap are unit-tested, rather than in shell.
+    - name: Resolve monitor identity
+      id: identity
+      shell: bash
+      env:
+        PYTHONPATH: ${{ github.action_path }}
+        MANIFEST: ${{ steps.manifest.outputs.path }}
+        MONITOR_ID: ${{ inputs.monitor-id }}
+        BASELINE_BRANCH: ${{ inputs.baseline-branch }}
+      run: |
+        python -m monitor.identity \
+          --manifest "$MANIFEST" \
+          --monitor-id "$MONITOR_ID" \
+          --baseline-branch "$BASELINE_BRANCH"
+
     - name: Scan with rl-protect
       shell: bash
       env:
@@ -197,7 +276,7 @@ runs:
       shell: bash
       env:
         BASELINE_PATH: ${{ inputs.baseline-path }}
-        BASELINE_BRANCH: ${{ inputs.baseline-branch }}
+        BASELINE_BRANCH: ${{ steps.identity.outputs.baseline-branch }}
       run: |
         if [[ -z "$BASELINE_BRANCH" ]]; then
           # Baseline lives on the scanned branch — use it in place.
@@ -264,12 +343,17 @@ runs:
         retention-days: 90
 
     - name: Notify via GitHub issue
-      if: inputs.notify == 'issue' && steps.diff.outputs.has-updates == 'true'
+      if: >-
+        inputs.notify == 'issue'
+        && steps.diff.outputs.has-updates == 'true'
+        && steps.guard.outputs.dry-run != 'true'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
         PYTHONPATH: ${{ github.action_path }}
         ISSUE_LABEL: ${{ inputs.issue-label }}
+        MARKER_CRITICAL: ${{ steps.identity.outputs.marker-critical }}
+        MARKER_STANDARD: ${{ steps.identity.outputs.marker-standard }}
         CRITICAL_BODY: ${{ steps.diff.outputs.issue-critical-body }}
         STANDARD_BODY: ${{ steps.diff.outputs.issue-standard-body }}
         CRITICAL_COMMENT: ${{ steps.diff.outputs.issue-critical-comment }}
@@ -291,24 +375,32 @@ runs:
             --body-file "$body" \
             "${mode[@]}" "$@"
         }
+        # The first label is the marker: it names both the bucket and the
+        # monitor, so the two lookups can never resolve to each other's thread
+        # or to another manifest's. The bare labels that follow are for humans
+        # to filter and subscribe on, and carry no meaning for the lookup.
         if [[ -n "$CRITICAL_BODY" ]]; then
           notify_bucket "$OUT/issue_critical.title" "$CRITICAL_BODY" \
             "$CRITICAL_COMMENT" \
+            --label "$MARKER_CRITICAL" \
             --label "rl-protect-malware" --label "$ISSUE_LABEL"
         fi
         if [[ -n "$STANDARD_BODY" ]]; then
           notify_bucket "$OUT/issue_standard.title" "$STANDARD_BODY" \
             "$STANDARD_COMMENT" \
-            --label "$ISSUE_LABEL" --exclude-label "rl-protect-malware"
+            --label "$MARKER_STANDARD" --label "$ISSUE_LABEL"
         fi
 
     - name: Commit updated baseline
-      if: inputs.commit-baseline == 'true'
+      if: >-
+        inputs.commit-baseline == 'true'
+        && steps.guard.outputs.dry-run != 'true'
       shell: bash
       env:
         BASELINE_PATH: ${{ inputs.baseline-path }}
-        BASELINE_BRANCH: ${{ inputs.baseline-branch }}
+        BASELINE_BRANCH: ${{ steps.identity.outputs.baseline-branch }}
         BASELINE_FILE: ${{ steps.baseline.outputs.file }}
+        SCANNED_BRANCH: ${{ steps.guard.outputs.scanned-branch }}
       run: |
         git config user.name "rl-protect-monitor[bot]"
         git config user.email "rl-protect-monitor@users.noreply.github.com"
@@ -330,49 +422,76 @@ runs:
           # uncommitted, which is the recoverable half of that trade.
           pushed=""
           for attempt in 1 2 3; do
-            if git push origin "HEAD:$GITHUB_REF_NAME"; then
+            if git push origin "HEAD:$SCANNED_BRANCH"; then
               pushed=1
               break
             fi
-            echo "Push rejected (attempt $attempt) — rebasing onto $GITHUB_REF_NAME"
-            git fetch origin "$GITHUB_REF_NAME"
+            echo "Push rejected (attempt $attempt) — rebasing onto $SCANNED_BRANCH"
+            git fetch origin "$SCANNED_BRANCH"
             if ! git rebase FETCH_HEAD; then
               git rebase --abort || true
-              echo "::error::Could not rebase the baseline commit onto $GITHUB_REF_NAME. Resolve the conflict on $BASELINE_PATH, or set fetch-depth: 0 on actions/checkout if the shallow history is too short to rebase."
+              echo "::error::Could not rebase the baseline commit onto $SCANNED_BRANCH. Resolve the conflict on $BASELINE_PATH, or set fetch-depth: 0 on actions/checkout if the shallow history is too short to rebase."
               exit 1
             fi
           done
           if [[ -z "$pushed" ]]; then
-            echo "::error::Could not push the updated baseline to $GITHUB_REF_NAME"
+            echo "::error::Could not push the updated baseline to $SCANNED_BRANCH"
             exit 1
           fi
-          echo "Baseline committed and pushed to $GITHUB_REF_NAME"
+          echo "Baseline committed and pushed to $SCANNED_BRANCH"
           exit 0
         fi
 
         # Mode 2: baseline lives on a dedicated branch. Build the commit in
         # a temporary worktree so the scanned checkout is never touched; the
         # branch is created as an orphan (baseline-only history) on first run.
+        #
+        # Retried like mode 1, and for the same reason — a rejected push must
+        # not end the run with the baseline uncommitted and the delta already
+        # posted. Resolving is simpler here: each attempt rebuilds from the
+        # branch's current tip and stages only this monitor's own path, so
+        # another monitor's concurrent commit is preserved rather than
+        # conflicted with. Same-monitor overlap is already serialised by the
+        # workflow's concurrency group, but that group lives in a file the
+        # consumer edits, so this cannot rely on it.
         WORKTREE="$RUNNER_TEMP/rl-protect-baseline-worktree"
-        if git fetch --quiet origin "$BASELINE_BRANCH" 2>/dev/null; then
-          git worktree add --detach "$WORKTREE" FETCH_HEAD
-        else
-          git worktree add --detach "$WORKTREE"
-          git -C "$WORKTREE" checkout --quiet --orphan "rlpm-tmp-$$"
-          git -C "$WORKTREE" rm -rfq . 2>/dev/null || true
-        fi
-        mkdir -p "$WORKTREE/$(dirname "$BASELINE_PATH")"
-        cp "$BASELINE_FILE" "$WORKTREE/$BASELINE_PATH"
-        git -C "$WORKTREE" add -- "$BASELINE_PATH"
-        if git -C "$WORKTREE" diff --cached --quiet 2>/dev/null \
-           && git -C "$WORKTREE" rev-parse --verify --quiet HEAD >/dev/null; then
-          echo "Baseline unchanged — nothing to commit"
-        else
+        pushed=""
+        for attempt in 1 2 3; do
+          # A worktree left by the previous attempt would fail `worktree add`,
+          # and its orphan branch ref survives in the shared repo once
+          # committed — hence a fresh name per attempt.
+          rm -rf "$WORKTREE"
+          git worktree prune
+          if git fetch --quiet origin "$BASELINE_BRANCH" 2>/dev/null; then
+            git worktree add --detach "$WORKTREE" FETCH_HEAD
+          else
+            git worktree add --detach "$WORKTREE"
+            git -C "$WORKTREE" checkout --quiet --orphan "rlpm-tmp-$$-$attempt"
+            git -C "$WORKTREE" rm -rfq . 2>/dev/null || true
+          fi
+          mkdir -p "$WORKTREE/$(dirname "$BASELINE_PATH")"
+          cp "$BASELINE_FILE" "$WORKTREE/$BASELINE_PATH"
+          git -C "$WORKTREE" add -- "$BASELINE_PATH"
+          if git -C "$WORKTREE" diff --cached --quiet 2>/dev/null \
+             && git -C "$WORKTREE" rev-parse --verify --quiet HEAD >/dev/null; then
+            echo "Baseline unchanged — nothing to commit"
+            pushed=1
+            break
+          fi
           git -C "$WORKTREE" commit -m "chore(rl-protect): update findings baseline"
-          git -C "$WORKTREE" push origin "HEAD:refs/heads/$BASELINE_BRANCH"
-          echo "Baseline committed and pushed to $BASELINE_BRANCH"
+          if git -C "$WORKTREE" push origin "HEAD:refs/heads/$BASELINE_BRANCH"; then
+            pushed=1
+            echo "Baseline committed and pushed to $BASELINE_BRANCH"
+            break
+          fi
+          echo "Push to $BASELINE_BRANCH rejected (attempt $attempt) — rebuilding on its current tip"
+        done
+        git worktree remove --force "$WORKTREE" 2>/dev/null || true
+        git worktree prune
+        if [[ -z "$pushed" ]]; then
+          echo "::error::Could not push the updated baseline to $BASELINE_BRANCH"
+          exit 1
         fi
-        git worktree remove --force "$WORKTREE"
 
     - name: Check quota usage
       shell: bash
@@ -396,8 +515,13 @@ runs:
     # monitor found nothing". Pinging after the gate would skip the ping on
     # exactly the runs that worked — fail-on=critical plus a real malware
     # finding would page the on-call with a dead-monitor alert instead.
+    # Not on a dry run: the heartbeat asserts that the monitor ran, and a
+    # manual test from a branch would keep the signal green while the real
+    # scheduled monitor was failing.
     - name: Heartbeat ping
-      if: inputs.heartbeat-url != ''
+      if: >-
+        inputs.heartbeat-url != ''
+        && steps.guard.outputs.dry-run != 'true'
       shell: bash
       env:
         HEARTBEAT_URL: ${{ inputs.heartbeat-url }}

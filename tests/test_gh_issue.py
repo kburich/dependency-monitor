@@ -88,7 +88,7 @@ def outputs(tmp_path):
 
 
 def notify(monkeypatch, fake, outputs, labels=("rl-protect-monitor",),
-           exclude=(), body_only=False, rc=0):
+           body_only=False, rc=0):
     monkeypatch.setattr(gh_issue.subprocess, "run", fake)
     argv = ["--repo", "owner/name",
             "--title-file", str(outputs / "issue.title"),
@@ -97,8 +97,6 @@ def notify(monkeypatch, fake, outputs, labels=("rl-protect-monitor",),
              else ["--comment-file", str(outputs / "issue_comment.md")])
     for label in labels:
         argv += ["--label", label]
-    for label in exclude:
-        argv += ["--exclude-label", label]
     assert gh_issue.run(argv) == rc
     return fake
 
@@ -269,70 +267,82 @@ class TestBodyOnlyRefresh:
         assert fake.calls == []
 
 
-MALWARE_ISSUE = (2, ["rl-protect-malware", "rl-protect-monitor"])
-STANDARD_ISSUE = (1, ["rl-protect-monitor"])
+#: How the two buckets of one monitor are labelled: a marker naming bucket and
+#: monitor, plus bare classification labels that are only there for humans to
+#: filter on. `pkg` stands in for the monitor id.
+CRITICAL_LABELS = ("rl-protect-malware/pkg", "rl-protect-malware",
+                   "rl-protect-monitor")
+STANDARD_LABELS = ("rl-protect-monitor/pkg", "rl-protect-monitor")
+
+MALWARE_ISSUE = (2, list(CRITICAL_LABELS))
+STANDARD_ISSUE = (1, list(STANDARD_LABELS))
+#: Another monitor in the same repo, scanning a second manifest.
+OTHER_MALWARE_ISSUE = (3, ["rl-protect-malware/req", "rl-protect-malware",
+                           "rl-protect-monitor"])
 
 
 class TestBucketIsolation:
-    """The critical issue carries the shared issue-label as well as its own
-    marker, so a standard lookup by the shared label alone can land on the
-    malware incident — commenting a standard delta into that thread and
-    replacing its title and body with the standard bucket's stats page."""
+    """Markers name bucket *and* monitor, so every lookup is unambiguous.
+
+    Both issues carry the bare `rl-protect-monitor` label, so a lookup by that
+    alone could land the standard bucket's delta on the malware incident —
+    commenting into that thread and replacing its title and stats body. The
+    marker is what keeps them apart, with no exclusion rules involved.
+    """
 
     def test_the_malware_issue_is_not_adopted_as_the_standard_issue(
             self, monkeypatch, outputs):
         fake = notify(monkeypatch,
                       FakeGh(open_issues=[MALWARE_ISSUE, STANDARD_ISSUE]),
-                      outputs, exclude=("rl-protect-malware",))
+                      outputs, labels=STANDARD_LABELS)
         assert fake.call("comment")[3] == "1"
         assert fake.call("edit")[3] == "1"
 
-    def test_a_new_issue_opens_when_only_the_malware_issue_matches(
+    def test_a_new_issue_opens_when_only_the_malware_issue_is_open(
             self, monkeypatch, outputs):
         """A second standard issue is recoverable; a clobbered incident is
         not — the malware issue's counters would be gone for good."""
         fake = notify(monkeypatch, FakeGh(open_issues=[MALWARE_ISSUE]),
-                      outputs, exclude=("rl-protect-malware",))
+                      outputs, labels=STANDARD_LABELS)
         assert "edit" not in fake.verbs()
         assert "create" in fake.verbs()
 
-    def test_the_critical_lookup_still_finds_its_own_issue(self, monkeypatch,
-                                                           outputs):
-        """Its marker is unique to the bucket, so it needs no exclusion."""
+    def test_the_critical_lookup_finds_its_own_issue(self, monkeypatch,
+                                                     outputs):
         fake = notify(monkeypatch, FakeGh(open_issues=[MALWARE_ISSUE]),
-                      outputs,
-                      labels=("rl-protect-malware", "rl-protect-monitor"))
+                      outputs, labels=CRITICAL_LABELS)
         assert fake.call("edit")[3] == "2"
 
+    def test_another_monitors_issue_is_never_adopted(self, monkeypatch,
+                                                     outputs):
+        """Two manifests scanned in one repo each own their thread: adopting
+        the other's would interleave deltas and overwrite its stats body."""
+        fake = notify(monkeypatch, FakeGh(open_issues=[OTHER_MALWARE_ISSUE]),
+                      outputs, labels=CRITICAL_LABELS)
+        assert "edit" not in fake.verbs()
+        assert "create" in fake.verbs()
 
-class TestLookupPaging:
-    """The lookup reads one page of labelled issues. A rolling issue past the
-    end of it reads as absent, and the caller opens a duplicate of the thread
-    already holding the bucket's history — so a full page has to say so."""
+    def test_no_exclusion_is_needed_to_get_there(self, monkeypatch, outputs):
+        """The property the deleted --exclude-label machinery used to buy."""
+        fake = notify(monkeypatch,
+                      FakeGh(open_issues=[MALWARE_ISSUE, STANDARD_ISSUE]),
+                      outputs, labels=STANDARD_LABELS)
+        assert not any("--exclude-label" in cmd for cmd in fake.calls)
 
-    def test_the_lookup_asks_for_the_full_page(self, monkeypatch, outputs):
+
+class TestLookup:
+    def test_the_marker_is_the_only_filter(self, monkeypatch, outputs):
+        fake = notify(monkeypatch, FakeGh(open_number=1), outputs,
+                      labels=STANDARD_LABELS)
+        listing = fake.call("list")
+        assert flag(listing, "--label") == "rl-protect-monitor/pkg"
+        assert listing.count("--label") == 1
+
+    def test_one_row_is_enough(self, monkeypatch, outputs):
+        """The marker names one bucket of one monitor, so the newest match is
+        the answer — no page to scan and nothing to skip past."""
         fake = notify(monkeypatch, FakeGh(open_number=1), outputs)
-        assert (int(flag(fake.call("list"), "--limit"))
-                == gh_issue.ISSUE_LOOKUP_LIMIT)
-
-    def test_a_full_page_of_excluded_issues_warns_before_duplicating(
-            self, monkeypatch, outputs, capsys):
-        # Every issue carries the marker *and* the exclusion, so the page
-        # fills without a match — the bucket's own issue could be just past.
-        crowd = [(n, ["rl-protect-monitor", "rl-protect-malware"])
-                 for n in range(gh_issue.ISSUE_LOOKUP_LIMIT, 0, -1)]
-        fake = notify(monkeypatch, FakeGh(open_issues=crowd), outputs,
-                      exclude=("rl-protect-malware",))
-        assert "create" in fake.verbs()
-        assert "::warning::" in capsys.readouterr().err
-
-    def test_a_partial_page_creates_without_warning(self, monkeypatch,
-                                                    outputs, capsys):
-        """The page was not full, so "no match" is the whole truth."""
-        fake = notify(monkeypatch, FakeGh(open_issues=[MALWARE_ISSUE]),
-                      outputs, exclude=("rl-protect-malware",))
-        assert "create" in fake.verbs()
-        assert "::warning::" not in capsys.readouterr().err
+        assert flag(fake.call("list"), "--limit") == "1"
 
 
 class BadCreateOutputGh(FakeGh):

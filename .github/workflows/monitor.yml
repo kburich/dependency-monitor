@@ -18,9 +18,12 @@ on:
       baseline-path:
         type: string
         default: .rl-protect/baseline.json
+      monitor-id:
+        type: string
+        default: auto
       baseline-branch:
         type: string
-        default: ""
+        default: auto
       commit-baseline:
         type: string
         default: "true"
@@ -55,13 +58,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: kburich/rl-protect-monitor@v1
+      - uses: kburich/rl-protect-monitor@v2
         with:
           rl-token: ${{ secrets.rl-token }}
           manifest-path: ${{ inputs.manifest-path }}
           scan-profile: ${{ inputs.scan-profile }}
           check-deps: ${{ inputs.check-deps }}
           baseline-path: ${{ inputs.baseline-path }}
+          monitor-id: ${{ inputs.monitor-id }}
           baseline-branch: ${{ inputs.baseline-branch }}
           commit-baseline: ${{ inputs.commit-baseline }}
           notify: ${{ inputs.notify }}
