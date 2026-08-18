@@ -14,20 +14,38 @@ jobs:
     permissions:
       contents: write
       issues: write
+    # Two overlapping runs (a cron firing while a manual dispatch is in
+    # flight) both diff against the same baseline and both push it — one
+    # commit loses, and the delta it reported is never recorded, so those
+    # findings alert again next run. Queue instead of cancelling: a cancelled
+    # run may already have posted its delta comment without committing the
+    # baseline. The group matches the reusable workflow's, so switching
+    # between the two does not leave both running at once.
+    concurrency:
+      group: rl-protect-monitor-${{ github.repository }}-${{ github.ref }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
 
       - id: rl
-        uses: kburich/rl-protect-monitor@v1
+        uses: kburich/rl-protect-monitor@v2
         with:
           rl-token: ${{ secrets.RL_TOKEN }}
           # manifest-path: package-lock.json   # omit to auto-detect
           # scan-profile: hardened             # baseline is the default
           # fail-on: critical                  # never (default) for pure monitoring
 
-      # Example of building on the outputs — e.g. a Slack ping on malware:
+      # Example of building on the outputs — e.g. a Slack ping on malware.
+      # Both values arrive through `env:`, never inside the `run:` body:
+      # `${{ }}` is substituted before bash sees the line, which writes the
+      # secret into the rendered script and would run any other value as
+      # shell. `jq` builds the JSON so the text stays correctly quoted.
       - if: steps.rl.outputs.has-critical-alerts == 'true'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          REPO: ${{ github.repository }}
         run: |
-          curl -fsS -X POST -H 'Content-Type: application/json' \
-            -d '{"text":"🚨 rl-protect flagged malware in ${{ github.repository }} — see the rl-protect-malware issue."}' \
-            "${{ secrets.SLACK_WEBHOOK_URL }}"
+          jq -n --arg repo "$REPO" \
+            '{text: "🚨 rl-protect flagged malware in \($repo) — see the rl-protect-malware issue."}' \
+            | curl -fsS -X POST -H 'Content-Type: application/json' \
+                --data-binary @- "$SLACK_WEBHOOK_URL"

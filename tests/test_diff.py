@@ -19,6 +19,20 @@ def findings(name):
     return normalize(load(name))
 
 
+def first_vuln(report):
+    """The first per-CVE detail block in a report, to corrupt in place."""
+    for pkg in report["analysis"]["report"]["packages"]:
+        details = pkg["analysis"].get("vulnerabilities")
+        if details:
+            return next(iter(details.values()))
+    raise AssertionError("fixture carries no vulnerability details")
+
+
+def scored_cve(report):
+    return next(f for f in normalize(report)
+                if f.category == "vulnerabilities")
+
+
 class TestNormalize:
     def test_clean_report_has_no_findings(self):
         assert findings("report_clean.json") == []
@@ -57,6 +71,48 @@ class TestNormalize:
     def test_empty_report_tolerated(self):
         assert normalize({}) == []
         assert normalize({"analysis": {"report": {}}}) == []
+
+    @pytest.mark.parametrize("bad", ["many", None, [], {}, float("inf")])
+    def test_a_corrupt_report_count_heals_instead_of_crashing(self, bad):
+        report = load("report_baseline.json")
+        # Every package carries a `hardening` entry; only the non-pass one
+        # becomes a finding, so that is the count worth corrupting.
+        entry = next(
+            pkg["analysis"]["assessment"]["hardening"]
+            for pkg in report["analysis"]["report"]["packages"]
+            if pkg["analysis"]["assessment"]["hardening"]["status"] != "pass"
+        )
+        entry["count"] = bad
+        hardening = next(f for f in normalize(report)
+                         if f.category == "hardening")
+        assert hardening.count == 0
+
+    @pytest.mark.parametrize("bad", ["many", None, [], {}, float("inf")])
+    def test_a_corrupt_baseline_count_heals_instead_of_crashing(self, bad):
+        record = findings("report_baseline.json")[0].to_dict()
+        record["count"] = bad
+        assert Finding.from_dict(record).count == 0
+
+    @pytest.mark.parametrize(
+        "bad", ["high", True, None, [], {}, float("inf"), float("nan")])
+    def test_an_unusable_cvss_score_reads_as_unknown_not_zero(self, bad):
+        """None renders as "—". Healing to 0.0 would print a reassuring
+        score beside a real CVE."""
+        report = load("report_baseline.json")
+        first_vuln(report)["cvss"]["baseScore"] = bad
+        assert scored_cve(report).score is None
+
+    def test_a_numeric_string_score_is_still_read(self):
+        report = load("report_baseline.json")
+        first_vuln(report)["cvss"]["baseScore"] = "7.5"
+        assert scored_cve(report).score == 7.5
+
+    @pytest.mark.parametrize("bad", ["high", True, [], float("nan")])
+    def test_an_unusable_baseline_score_reads_as_unknown(self, bad):
+        record = next(f for f in findings("report_baseline.json")
+                      if f.category == "vulnerabilities").to_dict()
+        record["score"] = bad
+        assert Finding.from_dict(record).score is None
 
     def test_roundtrip_serialization(self):
         for f in findings("report_new_malware.json"):

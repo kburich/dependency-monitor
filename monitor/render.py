@@ -1,4 +1,4 @@
-"""Render a Delta into Markdown: job summary + GitHub issue bodies.
+"""Render a Delta into Markdown: job summary, issue bodies, delta comments.
 
 Real reports are large and highly repetitive: a single Go-based npm package
 ships ~20 per-platform variants that each carry the same stdlib CVEs, so 58
@@ -35,8 +35,40 @@ def _fmt_score(score: Optional[float]) -> str:
     return "—" if score is None else f"{score:.1f}"
 
 
+def _cell(value) -> str:
+    """Report-supplied text, made safe as a plain Markdown table cell.
+
+    Titles and identifiers come from the vendor's finding database, so they
+    can carry anything: a `|` adds phantom columns, a newline ends the row
+    and with it the table, and a literal `<details>`/`</details>` opens or
+    closes the HTML block the delta comment wraps its tables in.
+    """
+    text = " ".join(str(value).split())
+    text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return text.replace("|", "\\|")
+
+
+def _code_cell(value) -> str:
+    """Report-supplied text, made safe inside a `code span` table cell.
+
+    A code span renders HTML literally, so entity-escaping would show the
+    reader `&lt;` instead of `<`; angle brackets are substituted the way the
+    backtick that would end the span early already is. GitHub does escape a
+    tag inside a code span, so this is not about injection — it is that
+    `_unclosed_details` counts tags on the raw string, and a purl carrying
+    `</details>` makes an open block look closed. `_clip` would then leave
+    the truncation notice hidden inside the collapsed block, the one failure
+    it exists to prevent. The pipe is escaped because GitHub splits columns
+    on it even inside code.
+    """
+    text = " ".join(str(value).split())
+    for bad, safe in (("`", "'"), ("<", "‹"), (">", "›"), ("|", "\\|")):
+        text = text.replace(bad, safe)
+    return f"`{text}`"
+
+
 def _packages_cell(purls: List[str]) -> str:
-    shown = [f"`{p}`" for p in purls[:MAX_PACKAGES_PER_ROW]]
+    shown = [_code_cell(p) for p in purls[:MAX_PACKAGES_PER_ROW]]
     extra = len(purls) - len(shown)
     if extra > 0:
         shown.append(f"+{extra} more")
@@ -71,12 +103,27 @@ def _group_changes(changes: List[Change]) -> List[Tuple[Change, List[str]]]:
     return [(c, sorted(purls)) for c, purls in groups.values()]
 
 
-def _table(header: str, rows: List[str], total_groups: int, max_rows: int) -> str:
+def _table(header: str, rows: List[str], total_groups: int, max_rows: int,
+           total_findings: int) -> str:
+    """Render the rows, then reconcile the two counts the reader can see.
+
+    Headlines and the stats counters are package-level — one per (package,
+    finding) pair, the same unit as `delta.json` and the action's count
+    outputs — while a row here is one *distinct* finding across all the
+    packages carrying it. On a real scan those differ by an order of
+    magnitude (1218 against 58), so a table that just says "findings" leaves
+    one comment stating two numbers that cannot be reconciled.
+    """
     shown = rows[:max_rows]
-    out = "\n".join([header] + shown)
+    lead = ""
+    if total_findings > total_groups:
+        lead = (f"_{total_findings} findings across all affected packages, "
+                f"grouped into {total_groups} distinct finding"
+                f"{'s' if total_groups != 1 else ''} below._\n\n")
+    out = lead + "\n".join([header] + shown)
     hidden = total_groups - len(shown)
     if hidden > 0:
-        out += (f"\n\n_… and {hidden} more finding"
+        out += (f"\n\n_… and {hidden} more distinct finding"
                 f"{'s' if hidden != 1 else ''} not shown._ {_FULL_LIST_NOTE}")
     return out
 
@@ -88,12 +135,13 @@ def _finding_table(findings: List[Finding], max_rows: int = MAX_ROWS_SUMMARY) ->
     )
     groups = _group_findings(findings)
     rows = [
-        f"| {_packages_cell(purls)} | {f.category} | {f.finding_id} | "
-        f"{_STATUS_EMOJI.get(f.status, '')} {f.status} | {_fmt_score(f.score)} | "
-        f"{f.title} |"
+        f"| {_packages_cell(purls)} | {_cell(f.category)} | "
+        f"{_cell(f.finding_id)} | "
+        f"{_STATUS_EMOJI.get(f.status, '')} {_cell(f.status)} | "
+        f"{_fmt_score(f.score)} | {_cell(f.title)} |"
         for f, purls in groups
     ]
-    return _table(header, rows, len(groups), max_rows)
+    return _table(header, rows, len(groups), max_rows, len(findings))
 
 
 def _change_table(changes: List[Change], max_rows: int = MAX_ROWS_SUMMARY) -> str:
@@ -106,11 +154,17 @@ def _change_table(changes: List[Change], max_rows: int = MAX_ROWS_SUMMARY) -> st
         if c.version_changed:
             what += " (version changed)"
         rows.append(
-            f"| {_packages_cell(purls)} | {c.after.category} | {c.after.finding_id} | "
-            f"{what} | {c.before.status}({c.before.count}) → "
-            f"{c.after.status}({c.after.count}) |"
+            f"| {_packages_cell(purls)} | {_cell(c.after.category)} | "
+            f"{_cell(c.after.finding_id)} | {what} | "
+            f"{_cell(c.before.status)}({_cell(c.before.count)}) → "
+            f"{_cell(c.after.status)}({_cell(c.after.count)}) |"
         )
-    return _table(header, rows, len(groups), max_rows)
+    return _table(header, rows, len(groups), max_rows, len(changes))
+
+
+def _unclosed_details(text: str) -> int:
+    """How many <details> blocks `text` leaves open."""
+    return max(text.count("<details>") - text.count("</details>"), 0)
 
 
 def _clip(body: str, limit: int = GITHUB_BODY_LIMIT) -> str:
@@ -118,14 +172,43 @@ def _clip(body: str, limit: int = GITHUB_BODY_LIMIT) -> str:
     if len(body) <= limit:
         return body
     notice = f"\n\n_Body truncated to fit GitHub's size limit._ {_FULL_LIST_NOTE}"
-    keep = body[: limit - len(notice)]
-    keep = keep[: keep.rfind("\n")] if "\n" in keep else keep
-    return keep + notice
+    closer = "\n\n</details>"
+    budget = max(limit - len(notice), 0)
+
+    def fits(keep: str) -> bool:
+        return len(keep) + len(closer) * _unclosed_details(keep) <= budget
+
+    # Largest prefix that still leaves room to reclose the <details> blocks
+    # the cut leaves open — GitHub auto-closes them at the end of the
+    # comment, which would render the notice hidden inside the collapsed
+    # block. Searched rather than computed from the whole body's tag count:
+    # that reserve can exceed the limit outright, which makes the slice
+    # index negative so it trims from the tail and returns *more* than the
+    # limit this guard exists to enforce.
+    lo, hi = 0, len(body)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if fits(body[:mid]):
+            lo = mid
+        else:
+            hi = mid - 1
+    keep = body[:lo]
+
+    # Prefer a clean line break, but not at the cost of the budget: cutting
+    # away a trailing </details> costs a closer longer than the text removed.
+    line_break = keep.rfind("\n")
+    if line_break != -1 and fits(keep[:line_break]):
+        keep = keep[:line_break]
+    return keep + closer * _unclosed_details(keep) + notice
 
 
-def render_summary(delta: Delta, manifest: str, first_run: bool = False,
-                   quota_note: Optional[str] = None) -> str:
-    """Markdown for the GitHub Actions job summary."""
+def render_summary(delta: Delta, manifest: str, first_run: bool = False) -> str:
+    """Markdown for the GitHub Actions job summary.
+
+    The quota warning is not rendered here: it is measured by a later step in
+    action.yml, after this summary has been written, and that step appends
+    its own line to $GITHUB_STEP_SUMMARY.
+    """
     lines = ["# rl-protect monitor", "", f"Manifest: `{manifest}`", ""]
 
     if first_run:
@@ -162,44 +245,135 @@ def render_summary(delta: Delta, manifest: str, first_run: bool = False,
         "",
     ]
 
-    if quota_note:
-        lines += [f"> {quota_note}", ""]
-
     return "\n".join(lines)
 
 
+def _delta_headline(new_count: int, changed_count: int,
+                    resolved_count: int = 0) -> str:
+    parts = []
+    if new_count:
+        parts.append(f"{new_count} new")
+    if changed_count:
+        parts.append(f"{changed_count} worsened")
+    if resolved_count:
+        parts.append(f"{resolved_count} resolved")
+    return " · ".join(parts) or "no changes"
+
+
 def render_issue_body(delta: Delta, manifest: str, critical: bool,
-                      run_url: Optional[str] = None) -> str:
-    """Markdown body for the rolling GitHub issue (one per severity bucket)."""
+                      run_url: Optional[str] = None,
+                      stats: Optional[Dict] = None,
+                      outstanding: Optional[int] = None,
+                      backlog: Optional[int] = None,
+                      date: str = "") -> str:
+    """Markdown body for the rolling GitHub issue (one per severity bucket).
+
+    The body is the issue's landing page: cumulative monitoring stats and a
+    pointer at the newest comment, which carries the latest delta. The delta
+    itself is deliberately not repeated here — the comment is its durable,
+    notifying copy.
+    """
+    new, changed = delta.alerts(critical)
     if critical:
-        new, changed = delta.new_critical, delta.changed_critical
         intro = (
             "rl-protect flagged **malware or tampering** in a dependency that "
             "was previously clean. Treat this as an incident: the affected "
             "version may already be installed in dev machines and CI."
         )
     else:
-        new, changed = delta.new_standard, delta.changed_standard
         intro = (
             "rl-protect found new (non-malware) findings in previously "
             "scanned dependencies."
         )
 
     lines = [intro, "", f"Manifest: `{manifest}`", ""]
-    if new:
-        lines += ["## New findings", "",
-                  _finding_table(new, MAX_ROWS_ISSUE), ""]
-    if changed:
-        lines += ["## Worsened findings", "",
-                  _change_table(changed, MAX_ROWS_ISSUE), ""]
+
+    if stats:
+        bucket = stats.get("critical" if critical else "standard") or {}
+        since = str(stats.get("since") or "")[:10]
+        lines += ["### Monitoring stats", ""]
+        if since:
+            lines.append(f"- **Monitoring since:** {since}")
+        lines += [
+            f"- **Runs with alerts:** {bucket.get('runs', 0)}",
+            f"- **Alerted so far:** {bucket.get('new', 0)} new · "
+            f"{bucket.get('changed', 0)} worsened",
+            f"- **Resolved since then:** {bucket.get('resolved', 0)}",
+        ]
+        if outstanding is not None:
+            lines.append(f"- **Currently outstanding:** {outstanding}")
+        # Every counter above covers alerts since monitoring started. The
+        # backlog is on a different footing — present before the baseline
+        # existed, never alerted on — so it gets its own line instead of
+        # inflating "outstanding" past what was ever reported.
+        if backlog:
+            lines.append(f"- **Pre-existing backlog:** {backlog} — present "
+                         "before monitoring started, never alerted on")
+        lines.append("")
+        if outstanding == 0:
+            lines += ["✅ Everything alerted in this bucket has since been "
+                      "resolved. The issue is left open for you to close.", ""]
+
+    resolved = delta.resolved_critical if critical else delta.resolved_standard
+    headline = _delta_headline(len(new), len(changed), len(resolved))
+    # The pointer only holds when this run posts a comment. A resolution-only
+    # run refreshes this body without commenting — nothing new to report, so
+    # nobody is paged — and must not point at a comment that is not coming.
+    pointer = (" — the full delta is in the newest comment below."
+               if (new or changed) else ".")
+    lines += [f"**Latest change{f' ({date})' if date else ''}:** "
+              f"{headline}{pointer}", ""]
+
     if run_url:
         lines += [f"[Workflow run]({run_url})", ""]
-    lines += [
-        "---",
-        "_Maintained by the rl-protect-monitor action. This issue is not "
-        "duplicated: the body above always shows the latest delta, and every "
-        "delta — including earlier ones — is posted as a comment below._",
-    ]
+    footer = ("_Maintained by the rl-protect-monitor action. This issue is not "
+              "duplicated: every delta — including earlier ones — is posted as "
+              "a comment below, and the body above tracks the cumulative "
+              "picture._")
+    lines += ["---", footer]
+    return _clip("\n".join(lines))
+
+
+def render_issue_comment(delta: Delta, critical: bool,
+                         manifest: str = "",
+                         run_url: Optional[str] = None,
+                         date: str = "") -> str:
+    """Markdown for the delta comment on the rolling issue.
+
+    The headline stays visible when the comment is collapsed; the tables sit
+    inside a <details> block so a long thread scans like a changelog. Most
+    email clients ignore <details>, so the notification email still shows the
+    full delta expanded.
+
+    The comment is the surface that notifies — the body carrying the same
+    context is edited silently — so the manifest and, for malware, the
+    incident guidance live here too, outside the collapse. Without them the
+    alert email names neither what was scanned (one rolling issue can cover
+    several manifests) nor why the finding is urgent.
+    """
+    new, changed = delta.alerts(critical)
+    label = "🚨 Malware/tampering" if critical else "New findings"
+
+    head = f"**{label}: {_delta_headline(len(new), len(changed))}**"
+    if manifest:
+        head += f" · `{manifest}`"
+    if date:
+        head += f" — {date}"
+    if run_url:
+        head += f" · [workflow run]({run_url})"
+
+    lines = [head, ""]
+    if critical:
+        lines += ["Treat this as an incident: the affected version may "
+                  "already be installed in dev machines and CI.", ""]
+    lines += ["<details>", "<summary>Show the full delta</summary>", ""]
+    if new:
+        lines += ["### New findings", "",
+                  _finding_table(new, MAX_ROWS_ISSUE), ""]
+    if changed:
+        lines += ["### Worsened findings", "",
+                  _change_table(changed, MAX_ROWS_ISSUE), ""]
+    lines += ["</details>"]
     return _clip("\n".join(lines))
 
 

@@ -43,5 +43,23 @@ jobs:
             --baseline /tmp/baseline.json \
             --manifest package-lock.json \
             --out-dir /tmp/out2
-          grep -q "malware" /tmp/out2/issue_critical.md
           grep -q '"new_critical": 1' /tmp/out2/delta.json
+          # The comment is the delta's only durable copy — assert the finding
+          # itself reached it. Grepping the body for "malware" would match its
+          # constant intro sentence and pass with no delta rendered at all.
+          grep -q "ua-parser-js" /tmp/out2/issue_critical_comment.md
+          grep -q "Monitoring stats" /tmp/out2/issue_critical.md
+
+      - name: Third run refreshes the body after the malware is resolved
+        run: |
+          python -m monitor.main \
+            --report tests/fixtures/report_baseline.json \
+            --baseline /tmp/baseline.json \
+            --manifest package-lock.json \
+            --out-dir /tmp/out3
+          # A resolution-only run must still re-render the stats body, or the
+          # open issue keeps asserting the pre-resolution counts forever.
+          grep -q "Currently outstanding:\*\* 0" /tmp/out3/issue_critical.md
+          grep -q "Resolved since then:\*\* 1" /tmp/out3/issue_critical.md
+          # …and must not produce a comment, which would page subscribers.
+          test ! -e /tmp/out3/issue_critical_comment.md

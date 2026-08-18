@@ -29,6 +29,8 @@ for version in "${versions[@]}"; do
   # The named volume keeps pip's download of pytest out of the repo.
   # --network host: container DNS does not resolve on this setup, so pip
   # cannot reach PyPI on the default bridge network.
+  # ${arr[@]+...}: bash < 4.4 (macOS ships 3.2) treats expanding an empty
+  # array as unbound under `set -u`.
   if ! docker run --rm --network host \
     -v "$PWD:/src:ro" -w /src \
     -v rl-protect-monitor-pip:/root/.cache/pip \
@@ -37,7 +39,7 @@ for version in "${versions[@]}"; do
     "python:${version}-slim" \
     bash -c 'python -m pip install --quiet pytest &&
              exec python -m pytest tests/ -v -p no:cacheprovider "$@"' \
-      _ "${pytest_args[@]}"; then
+      _ ${pytest_args[@]+"${pytest_args[@]}"}; then
     status=1
   fi
 done
