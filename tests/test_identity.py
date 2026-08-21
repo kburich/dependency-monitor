@@ -7,9 +7,24 @@ truncation depends on, since two monitors sharing an id silently overwrite each
 other's state.
 """
 
+import shutil
+import subprocess
+
 import pytest
 
 from monitor import identity
+
+#: The slug rules mirror `git check-ref-format`. Mirroring is how they drift,
+#: so the branch-name guard below asks git itself rather than re-stating them.
+_GIT = shutil.which("git")
+requires_git = pytest.mark.skipif(_GIT is None, reason="git not on PATH")
+
+
+def git_accepts_branch(name: str) -> bool:
+    return subprocess.run(
+        [_GIT, "check-ref-format", f"refs/heads/{name}"],
+        capture_output=True,
+    ).returncode == 0
 
 
 class TestSlugify:
@@ -30,6 +45,39 @@ class TestSlugify:
 
     def test_a_slug_with_nothing_usable_is_empty(self):
         assert identity.slugify("///") == ""
+
+    @pytest.mark.parametrize("manifest,expected", [
+        ("poetry.lock", "poetry-lock"),
+        ("uv.lock", "uv-lock"),
+        ("yarn.lock", "yarn-lock"),
+        ("Gemfile.lock", "Gemfile-lock"),
+        ("web/poetry.lock", "web-poetry-lock"),
+    ])
+    def test_a_trailing_lock_suffix_is_defused(self, manifest, expected):
+        """git reserves `.lock` on a ref component; four auto-detected
+        manifests end in it, so this is the ordinary path."""
+        assert identity.slugify(manifest) == expected
+
+    def test_only_a_trailing_lock_is_rewritten(self):
+        """The suffix is only reserved at the end of a component."""
+        assert identity.slugify("a.lockfile.json") == "a.lockfile.json"
+
+    def test_the_lock_suffix_is_matched_case_sensitively(self):
+        """git rejects `.lock` but accepts `.LOCK`; rewriting both would
+        change ids that were always valid."""
+        assert identity.slugify("poetry.LOCK") == "poetry.LOCK"
+
+    def test_a_bare_lock_suffix_survives_as_a_word(self):
+        assert identity.slugify(".lock") == "lock"
+
+    @pytest.mark.parametrize("value,expected", [
+        ("a/../b", "a-.-b"),
+        ("pkgs..old/uv.lock", "pkgs.old-uv-lock"),
+    ])
+    def test_dot_runs_collapse(self, value, expected):
+        """`..` is forbidden anywhere in a ref, and `.` survives the character
+        whitelist, so nothing else would catch it."""
+        assert identity.slugify(value) == expected
 
 
 class TestMonitorId:
@@ -79,6 +127,22 @@ class TestBaselineBranch:
 
     def test_empty_means_the_scanned_branch(self):
         assert identity.resolve_baseline_branch("", "x") == ""
+
+    @requires_git
+    @pytest.mark.parametrize("manifest", [
+        "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "poetry.lock",
+        "uv.lock", "requirements.txt", "Gemfile.lock", "pyproject.toml",
+        "setup.cfg", "package.json", "Gemfile",
+        "web/poetry.lock", "a/../b/uv.lock", ".hidden/Gemfile.lock",
+        "packages/" * 6 + "poetry.lock",
+    ])
+    def test_every_auto_detected_manifest_names_a_pushable_branch(self, manifest):
+        """The push builds `refs/heads/<branch>`, and an invalid refspec is
+        refused outright — after the delta comment has already been posted.
+        The list mirrors the auto-detection order in action.yml."""
+        branch = identity.resolve_baseline_branch(
+            identity.AUTO, identity.monitor_id(manifest))
+        assert git_accepts_branch(branch), branch
 
 
 class TestCli:

@@ -17,6 +17,7 @@ label name:
 
     package-lock.json          -> package-lock.json
     web/package-lock.json      -> web-package-lock.json
+    poetry.lock                -> poetry-lock  (git rejects a ref ending .lock)
     a/very/deeply/nested/…     -> truncated with a hash suffix (see MAX_ID_LEN)
 
 Usage:
@@ -64,16 +65,39 @@ AUTO = "auto"
 _UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
 _RUNS = re.compile(r"-{2,}")
 
+#: `..` is forbidden anywhere in a ref name, and `.` survives `_UNSAFE`, so a
+#: path like `pkgs/../lock.json` would otherwise slug straight through into an
+#: unpushable branch.
+_DOT_RUNS = re.compile(r"\.{2,}")
+
+#: A ref component may not end in `.lock` — git reserves that suffix for its
+#: own lockfiles, and rejects the refspec outright. Lowercase only, matching
+#: git's own check. This is the common case rather than an exotic one:
+#: `poetry.lock`, `uv.lock`, `yarn.lock` and `Gemfile.lock` are four of the
+#: manifests auto-detection looks for, and each would name a branch that
+#: cannot be created.
+_TRAILING_LOCK = re.compile(r"\.lock$")
+
 
 def slugify(value: str) -> str:
     """Reduce `value` to characters safe in both a branch name and a label.
 
-    Leading and trailing `-` and `.` are stripped: a branch component may not
-    start or end with a dot, and a label that does reads like a typo.
+    The character whitelist alone is not enough: the id is dropped verbatim
+    into a branch name, so the result also has to satisfy
+    `git check-ref-format` — no `..` sequence, and no trailing `.lock`. Both
+    are reachable from ordinary manifest paths, and both fail late, at the
+    push, after the delta has already been posted.
+
+    Leading and trailing `-` and `.` are stripped for the same reason: a
+    branch component may not start or end with a dot, and a label that does
+    reads like a typo.
     """
     slug = _UNSAFE.sub("-", value or "")
     slug = _RUNS.sub("-", slug)
-    return slug.strip("-.")
+    slug = _DOT_RUNS.sub(".", slug)
+    slug = slug.strip("-.")
+    # After the strip, so a bare `.lock` reduces to `lock` rather than `-lock`.
+    return _TRAILING_LOCK.sub("-lock", slug)
 
 
 def _shorten(slug: str) -> str:
