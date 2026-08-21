@@ -8,6 +8,30 @@ Consumers pin the floating major tag (`@v2`), which always points at the
 newest release in the `2.x` line. Pin an exact tag (`@v2.0.0`) if you need
 behaviour to stay frozen.
 
+## [Unreleased]
+
+### Fixed
+
+- Manifests whose name ends in `.lock` no longer derive an unusable baseline
+  branch. git reserves that suffix on a ref component and refuses the refspec
+  outright, so `poetry.lock`, `uv.lock`, `yarn.lock` and `Gemfile.lock` — four
+  of the manifests auto-detection looks for — each named a branch that could
+  not be created. The failure landed at the push, which runs *after* the
+  issue notification, so every run alerted and then died with the baseline
+  unwritten; with no baseline ever persisted, the next run re-alerted the same
+  findings. The suffix is now defused to `-lock`
+  (`rl-protect-baseline/poetry-lock`), matched case-sensitively as git matches
+  it, so a `.LOCK` path that was always valid keeps its id.
+- A `..` sequence in a manifest path no longer does the same. `.` survives the
+  slug's character whitelist while `..` is forbidden anywhere in a ref, so a
+  path like `pkgs/../uv.lock` reached the push and was refused there. Runs of
+  dots now collapse to one.
+
+  Monitors on the affected manifests never completed a first run, so no
+  baseline is orphaned by the new ids. Any rolling issues those runs managed
+  to open beforehand carry the old marker label and will not be recognised —
+  close them by hand.
+
 ## [2.0.0] - 2026-08-17
 
 The monitor becomes multi-manifest safe, and its durable state moves off your
