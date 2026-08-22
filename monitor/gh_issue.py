@@ -15,8 +15,10 @@ durable copy of its delta.
 On a new delta:
   - existing open issue: post the delta comment first, then edit the body —
     a failure between the two calls must not lose the delta;
-  - no open issue: create it (creation itself notifies, with the body), then
-    post the delta comment so the thread holds the delta the body points at.
+  - no open issue: create it (creation itself notifies, with the body), assign
+    anyone named by `--assignee` so they are subscribed before the delta
+    lands, then post the delta comment so the thread holds the delta the body
+    points at.
 
 A run that only *resolved* findings passes `--body-only`: the stats it shows
 have moved, so the body is refreshed, but there is nothing to report and a
@@ -103,6 +105,37 @@ def _find_open_issue(repo: str, label: str) -> Optional[int]:
     return issues[0]["number"] if issues else None
 
 
+def _assign(repo: str, number: str, assignees: List[str]) -> None:
+    """Subscribe humans to a newly opened issue by assigning them.
+
+    Assignment is the only thing this action can do to reach someone who is
+    not watching the repository. A label cannot: GitHub has no per-label
+    subscription, so an unwatched repo's alerts notify nobody at all — the
+    silent failure the heartbeat exists to catch, arriving by another route.
+
+    Best-effort on purpose. A typo'd or unauthorised username must never stop
+    a malware alert from being delivered, so a failure here warns and returns
+    rather than raising. GitHub also drops assignees who lack repo access
+    without erroring, so the warning is the only signal in either direction.
+
+    Only ever called on issue creation. Re-adding an assignee on every run
+    would revert a maintainer who deliberately unassigned themselves — the
+    same upsert bug that `--force` caused for labels.
+    """
+    if not assignees:
+        return
+    result = subprocess.run(
+        ["gh", "issue", "edit", number, "--repo", repo]
+        + [arg for user in assignees for arg in ("--add-assignee", user)],
+        check=False, capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        print(f"::warning::Could not assign {', '.join(assignees)} to issue "
+              f"#{number}: {result.stderr.strip()} — the issue itself was "
+              "created. Assign someone by hand, or they are notified only if "
+              "they watch the repository.", file=sys.stderr)
+
+
 def run(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="rl-protect-monitor-notify")
     parser.add_argument("--repo", required=True)
@@ -119,6 +152,11 @@ def run(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--label", action="append", required=True,
                         dest="labels", help="May be given multiple times; "
                         "the first label identifies the rolling issue")
+    parser.add_argument("--assignee", action="append", default=[],
+                        dest="assignees", help="Assigned when the issue is "
+                        "opened, which subscribes them to the thread. May be "
+                        "given multiple times. Without one, only watchers of "
+                        "the repository are notified.")
     args = parser.parse_args(argv)
     # Exactly one of the two: silently falling back to the body would post
     # the stats page as the delta comment, and a delta with no comment at all
@@ -166,6 +204,9 @@ def run(argv: Optional[List[str]] = None) -> int:
                       "creation — delta comment not posted", file=sys.stderr)
                 return 1
             tail = str(number)
+        # Before the comment, so an assignee is subscribed in time to be
+        # notified of the delta itself rather than only of the assignment.
+        _assign(args.repo, tail, args.assignees)
         _gh(["issue", "comment", tail, "--repo", args.repo,
              "--body-file", str(comment_file)], capture=False)
     else:

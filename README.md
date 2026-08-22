@@ -83,7 +83,8 @@ run's baseline — so the comment thread is the complete history. See
 | `baseline-branch` | `auto` | `auto` → `rl-protect-baseline/<monitor-id>`, an orphan branch your default branch's protection doesn't cover. A name uses that branch; empty commits the baseline to the default branch, where it shows up in PR diffs but needs direct pushes to be allowed |
 | `commit-baseline` | `true` | Commit + push the updated baseline. If `false`, persist the rewritten baseline yourself — against a stale baseline every run repeats the same alerts and the issue's cumulative stats reset to a single-run snapshot |
 | `notify` | `issue` | `issue` / `none` (job summary is always written) |
-| `issue-label` | `rl-protect-monitor` | Extra label on both rolling issues, for filtering and subscribing. It doesn't identify them — the per-monitor marker label does |
+| `issue-label` | `rl-protect-monitor` | Extra label on both rolling issues, for filtering. It doesn't identify them — the per-monitor marker label does |
+| `assignees` | — | Comma-separated usernames assigned when a rolling issue is opened, which subscribes them. Without it, only repo watchers are notified |
 | `alert-on-first-run` | `false` | Alert on all findings when no baseline exists |
 | `fail-on` | `never` | `never` / `critical` / `any-new`. A monitor should not gate — evaluated *after* notifications and baseline commit |
 | `heartbeat-url` | — | Ping URL (e.g. healthchecks.io) hit after each successful run |
@@ -110,6 +111,15 @@ the uploaded artifact holding it).
   rolling issues are named after the manifest it scans, so a monorepo can run
   one job per manifest without them overwriting each other. Two jobs pointed
   at the *same* manifest need distinct `monitor-id` values.
+- **Make sure someone is actually subscribed**: an alert nobody receives is
+  the same outcome as no alert. The rolling issues are opened by
+  `github-actions[bot]`, so you are notified only if you watch the repository
+  — and a label cannot help, because GitHub has no per-label subscription;
+  `issue-label` is for *filtering*. Either watch the repo (**All Activity**,
+  or **Custom → Issues**) or set `assignees`, which subscribes those users
+  when the issue is opened. Assignment happens at creation only, so someone
+  who unassigns themselves stays unassigned, and an existing issue is not
+  retro-assigned — close it, or assign by hand.
 - **Cron auto-disable**: GitHub disables scheduled workflows after 60 days
   without repo activity, and cron firing is best-effort. For a security
   monitor that failure mode is silent — set `heartbeat-url` to a
