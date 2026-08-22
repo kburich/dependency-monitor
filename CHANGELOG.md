@@ -10,6 +10,19 @@ behaviour to stay frozen.
 
 ## [Unreleased]
 
+### Added
+
+- An `assignees` input: comma-separated usernames assigned when a rolling
+  issue is opened, which subscribes them to the thread. Until now the action
+  had no way to reach anyone who was not already watching the repository —
+  the rolling issues are opened by `github-actions[bot]`, so they notify
+  watchers and nobody else. On an unwatched repo that meant alerts landed in
+  an issue and paged no one, which is indistinguishable from the monitor not
+  running. Assignment happens at issue creation only, so someone who
+  unassigns themselves is not re-added on the next run, and it is
+  best-effort: a name that cannot be assigned warns rather than failing the
+  run, because a malware alert must land even when its assignee is misspelt.
+
 ### Changed
 
 - The bundled actions move to their Node 24 majors: `actions/checkout@v7`,
@@ -21,6 +34,10 @@ behaviour to stay frozen.
   long past it. Consumers who copied `examples/consumer-action.yml` should
   bump their own `actions/checkout` pin too; the reusable workflow carries
   its own and needs nothing.
+- `issue-label` is documented as being for filtering only. It previously said
+  "for filtering and subscribing", but GitHub has no per-label notification
+  subscription — a reader who applied the label and expected to be paged got
+  nothing. Use `assignees`, or watch the repository.
 
 ### Fixed
 

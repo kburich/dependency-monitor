@@ -33,6 +33,10 @@ on:
       issue-label:
         type: string
         default: rl-protect-monitor
+      assignees:
+        # Comma-separated. Without one, an alert reaches only repo watchers.
+        type: string
+        default: ""
       alert-on-first-run:
         type: string
         default: "false"
@@ -70,6 +74,7 @@ jobs:
           commit-baseline: ${{ inputs.commit-baseline }}
           notify: ${{ inputs.notify }}
           issue-label: ${{ inputs.issue-label }}
+          assignees: ${{ inputs.assignees }}
           alert-on-first-run: ${{ inputs.alert-on-first-run }}
           fail-on: ${{ inputs.fail-on }}
           heartbeat-url: ${{ secrets.heartbeat-url || '' }}

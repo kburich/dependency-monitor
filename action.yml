@@ -65,11 +65,22 @@ inputs:
     default: issue
   issue-label:
     description: >-
-      Extra label applied to both buckets' rolling issues, for filtering and
-      subscribing. It does not identify them — that is the per-monitor marker
-      label derived from monitor-id.
+      Extra label applied to both buckets' rolling issues, for filtering. It
+      does not identify them — that is the per-monitor marker label derived
+      from monitor-id — and it does not subscribe anyone: GitHub has no
+      per-label notification. Use assignees for that.
     required: false
     default: rl-protect-monitor
+  assignees:
+    description: >-
+      Comma-separated usernames to assign when a rolling issue is opened,
+      which subscribes them to the thread. Without this, an alert reaches
+      only those watching the repository — on an unwatched repo it notifies
+      nobody. Applied at creation only, so an assignee you remove stays
+      removed. Best-effort: a name that cannot be assigned warns rather than
+      failing the run.
+    required: false
+    default: ""
   alert-on-first-run:
     description: Alert on all findings when no baseline exists yet
     required: false
@@ -352,6 +363,7 @@ runs:
         GH_TOKEN: ${{ inputs.github-token }}
         PYTHONPATH: ${{ github.action_path }}
         ISSUE_LABEL: ${{ inputs.issue-label }}
+        ASSIGNEES: ${{ inputs.assignees }}
         MARKER_CRITICAL: ${{ steps.identity.outputs.marker-critical }}
         MARKER_STANDARD: ${{ steps.identity.outputs.marker-standard }}
         CRITICAL_BODY: ${{ steps.diff.outputs.issue-critical-body }}
@@ -360,6 +372,16 @@ runs:
         STANDARD_COMMENT: ${{ steps.diff.outputs.issue-standard-comment }}
       run: |
         OUT="$RUNNER_TEMP/rl-protect-monitor-out"
+        # Comma-separated in, repeated flags out. Blank entries are dropped so
+        # a trailing comma or a stray space cannot become an empty --assignee.
+        ASSIGN=()
+        IFS=',' read -ra _users <<< "$ASSIGNEES"
+        for _u in ${_users[@]+"${_users[@]}"}; do
+          _u="$(echo "$_u" | tr -d '[:space:]')"
+          if [[ -n "$_u" ]]; then
+            ASSIGN+=(--assignee "$_u")
+          fi
+        done
         # An empty comment path means this bucket only resolved findings:
         # refresh its stats body, but post nothing and open nothing.
         notify_bucket() {
@@ -373,7 +395,7 @@ runs:
             --repo "$GITHUB_REPOSITORY" \
             --title-file "$title" \
             --body-file "$body" \
-            "${mode[@]}" "$@"
+            "${mode[@]}" ${ASSIGN[@]+"${ASSIGN[@]}"} "$@"
         }
         # The first label is the marker: it names both the bucket and the
         # monitor, so the two lookups can never resolve to each other's thread

@@ -88,7 +88,7 @@ def outputs(tmp_path):
 
 
 def notify(monkeypatch, fake, outputs, labels=("rl-protect-monitor",),
-           body_only=False, rc=0):
+           body_only=False, rc=0, assignees=()):
     monkeypatch.setattr(gh_issue.subprocess, "run", fake)
     argv = ["--repo", "owner/name",
             "--title-file", str(outputs / "issue.title"),
@@ -97,6 +97,8 @@ def notify(monkeypatch, fake, outputs, labels=("rl-protect-monitor",),
              else ["--comment-file", str(outputs / "issue_comment.md")])
     for label in labels:
         argv += ["--label", label]
+    for user in assignees:
+        argv += ["--assignee", user]
     assert gh_issue.run(argv) == rc
     return fake
 
@@ -382,3 +384,66 @@ class TestUnparseableCreateOutput:
         fake = notify(monkeypatch, BadCreateOutputGh(found_after_create=None),
                       outputs, rc=1)
         assert "comment" not in fake.verbs()
+
+
+class TestAssignees:
+    """Assignment is the only lever the action has on who gets notified.
+
+    A label cannot subscribe anyone — GitHub has no per-label notification —
+    so on a repository nobody watches, an unassigned rolling issue alerts into
+    a void. These pin that the assignment happens, that it happens early
+    enough to matter, and that it can never cost us the alert itself.
+    """
+
+    def test_assignees_are_added_to_a_newly_created_issue(self, monkeypatch,
+                                                          outputs):
+        fake = notify(monkeypatch, FakeGh(open_number=None), outputs,
+                      assignees=("alice", "bob"))
+        edit = fake.call("edit")
+        assert edit[3] == "9"
+        added = [edit[i + 1] for i, arg in enumerate(edit)
+                 if arg == "--add-assignee"]
+        assert added == ["alice", "bob"]
+
+    def test_assignment_precedes_the_delta_comment(self, monkeypatch, outputs):
+        """Assigning after the comment would subscribe them one delta too
+        late: they would be told they own the issue, not what it says."""
+        fake = notify(monkeypatch, FakeGh(open_number=None), outputs,
+                      assignees=("alice",))
+        assert fake.verbs() == ["list", "create", "edit", "comment"]
+
+    def test_no_assignees_means_no_edit_call(self, monkeypatch, outputs):
+        fake = notify(monkeypatch, FakeGh(open_number=None), outputs)
+        assert fake.verbs() == ["list", "create", "comment"]
+
+    def test_an_existing_issue_is_not_reassigned(self, monkeypatch, outputs):
+        """Re-adding every run would revert a maintainer who unassigned
+        themselves — the upsert bug `--force` caused for labels."""
+        fake = notify(monkeypatch, FakeGh(open_number=7), outputs,
+                      assignees=("alice",))
+        assert not any("--add-assignee" in cmd for cmd in fake.calls)
+
+    def test_a_failed_assignment_does_not_lose_the_alert(self, monkeypatch,
+                                                         outputs, capsys):
+        """A typo'd username must not stop a malware alert from landing."""
+        class FailingAssignGh(FakeGh):
+            def __call__(self, cmd, **kwargs):
+                result = super().__call__(cmd, **kwargs)
+                if cmd[:3] == ["gh", "issue", "edit"]:
+                    return subprocess.CompletedProcess(
+                        cmd, 1, stdout="",
+                        stderr="could not assign user 'alicce'\n")
+                return result
+
+        fake = notify(monkeypatch, FailingAssignGh(open_number=None), outputs,
+                      assignees=("alicce",))
+        assert "comment" in fake.verbs()
+        err = capsys.readouterr().err
+        assert "::warning::" in err and "alicce" in err
+
+    def test_body_only_never_assigns(self, monkeypatch, outputs):
+        """A resolution-only run opens nothing, so there is nothing to assign
+        and its edit must stay a plain body refresh."""
+        fake = notify(monkeypatch, FakeGh(open_number=7), outputs,
+                      body_only=True, assignees=("alice",))
+        assert not any("--add-assignee" in cmd for cmd in fake.calls)
