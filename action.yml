@@ -188,7 +188,7 @@ runs:
           fi
         fi
 
-    - uses: actions/setup-python@v5
+    - uses: actions/setup-python@v7
       with:
         python-version: ${{ inputs.python-version }}
 
@@ -335,7 +335,7 @@ runs:
           >> "$GITHUB_OUTPUT"
 
     - name: Upload delta report
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: ${{ steps.delta-artifact.outputs.name }}
         path: ${{ steps.diff.outputs.delta-json }}
