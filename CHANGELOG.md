@@ -10,6 +10,18 @@ behaviour to stay frozen.
 
 ## [Unreleased]
 
+### Changed
+
+- The bundled actions move to their Node 24 majors: `actions/checkout@v7`,
+  `actions/setup-python@v7` and `actions/upload-artifact@v7`. GitHub forced
+  the old Node 20 majors onto Node 24 and annotated every run with a
+  deprecation warning, so this only makes explicit what the runner was
+  already doing. **Self-hosted runners must be on 2.327.1 or newer** —
+  Node 24 actions will not start on anything older. GitHub-hosted runners are
+  long past it. Consumers who copied `examples/consumer-action.yml` should
+  bump their own `actions/checkout` pin too; the reusable workflow carries
+  its own and needs nothing.
+
 ### Fixed
 
 - Manifests whose name ends in `.lock` no longer derive an unusable baseline
