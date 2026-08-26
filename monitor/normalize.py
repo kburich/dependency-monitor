@@ -64,9 +64,9 @@ def coerce_count(value: Any) -> int:
     """Coerce any JSON-supplied counter to an int, healing junk to 0.
 
     Every counter this action reads — finding counts in the vendor's report,
-    and both finding counts and cumulative stats in a baseline on disk —
-    arrives as arbitrary JSON, so a bare int() turns one mangled value into a
-    crashed alerting run. 0 is the safe heal: a mangled cosmetic counter must
+    and finding counts in a baseline on disk — arrives as arbitrary JSON, so
+    a bare int() turns one mangled value into a crashed alerting run. 0 is
+    the safe heal: a mangled cosmetic counter must
     not take down the run, and 0 can never read as an escalation, so a
     corrupt count under-alerts rather than pages falsely. OverflowError
     included: json.load accepts the non-standard `Infinity` literal, and
