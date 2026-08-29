@@ -8,7 +8,7 @@ name: Dependency monitor
 
 on:
   schedule:
-    - cron: "0 6 * * *"   # daily; the RL database doesn't update faster than this
+    - cron: "0 6 * * *"   # daily or twice-daily is recommended
   workflow_dispatch: {}    # manual runs + keeps the cron from looking abandoned
 
 jobs:
