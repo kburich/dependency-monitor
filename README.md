@@ -58,17 +58,32 @@ commits it. Subsequent runs alert only on deltas:
 - **Vulnerabilities / secrets / licenses / hardening** → a separate,
   quieter rolling issue labeled `rl-protect-monitor`.
 
-Both issues roll rather than duplicate, and they are append-only: the body
-is written once, when the issue is opened, carrying that run's delta, and
-every later delta — resolutions included — arrives as a comment. Each delta
-is a visible one-line headline with the tables tucked into a `<details>`
-block, so the thread scans like a changelog, newest at the bottom. Comments
-are what notify subscribers, and most email clients ignore `<details>`, so
-the notification email still shows the full delta. Consecutive deltas don't
-overlap — each is measured against the previous run's baseline — so the
-thread is the complete history. See
-[examples/](examples/) for the direct-action variant with custom steps
-(e.g. Slack on malware).
+## Alerting
+
+The monitor alerts; it does not track. Each rolling issue is an append-only
+log: the body is written once, with the delta that opened it, and every later
+delta — resolutions included — is a comment. Nothing is edited, so the thread
+is the complete history, newest at the bottom. There is no outstanding count:
+track remediation where you track work, and close the issue when you're done
+with the thread — the next alert opens a fresh one.
+
+**Email.** An issue comment is an email to everyone subscribed, and the
+comment is written for that: the headline sits outside the `<details>`
+collapse, which most mail clients ignore, so the mail shows the full delta.
+Someone has to *be* subscribed, though — the issues are opened by
+`github-actions[bot]`, which notifies only repository watchers, and a label
+cannot subscribe anyone. Either watch the repo (**All Activity**, or
+**Custom → Issues**) or set `assignees`, which subscribes those users when an
+issue is opened. Assignment happens at creation only: an existing issue is
+not retro-assigned, and someone who unassigns themselves stays unassigned.
+
+**Slack and everything else.** [GitHub's Slack app](https://github.com/integrations/slack)
+can subscribe a channel to the repo's issues filtered by label, so
+`rl-protect-malware` alone can page a channel. Or guard your own step with
+the action's [outputs](#outputs) — `has-critical-alerts`, `has-alerts` —
+and post anywhere; [examples/consumer-action.yml](examples/consumer-action.yml)
+shows a Slack webhook on malware. `notify: none` skips the issues entirely
+and leaves the outputs and `delta-artifact` to drive your channel.
 
 ## Inputs
 
@@ -111,15 +126,6 @@ the uploaded artifact holding it).
   rolling issues are named after the manifest it scans, so a monorepo can run
   one job per manifest without them overwriting each other. Two jobs pointed
   at the *same* manifest need distinct `monitor-id` values.
-- **Make sure someone is actually subscribed**: an alert nobody receives is
-  the same outcome as no alert. The rolling issues are opened by
-  `github-actions[bot]`, so you are notified only if you watch the repository
-  — and a label cannot help, because GitHub has no per-label subscription;
-  `issue-label` is for *filtering*. Either watch the repo (**All Activity**,
-  or **Custom → Issues**) or set `assignees`, which subscribes those users
-  when the issue is opened. Assignment happens at creation only, so someone
-  who unassigns themselves stays unassigned, and an existing issue is not
-  retro-assigned — close it, or assign by hand.
 - **Cron auto-disable**: GitHub disables scheduled workflows after 60 days
   without repo activity, and cron firing is best-effort. For a security
   monitor that failure mode is silent — set `heartbeat-url` to a
@@ -144,13 +150,8 @@ the uploaded artifact holding it).
   ungrouped delta is uploaded as a workflow artifact on every run — named by
   the `delta-artifact` output and kept for 90 days — which is what the
   comment's truncation notice points at.
-- **Resolutions are reported, not tracked**: a run that only resolves
-  findings posts the resolution as a comment on the bucket's open issue —
-  and never opens one, since there is nothing to alert on. The issue is an
-  append-only alert log, not a status page: the monitor keeps no outstanding
-  count, so track remediation where you track work (Jira, or the issues
-  themselves) and close the rolling issue when you're done with the thread —
-  the next alert simply opens a fresh one, whose body is that delta.
+- **A resolution never opens an issue**: with no open issue for its bucket, a
+  resolution-only run posts nothing — there is nothing to alert on.
 - **Two units, both labelled**: counters and headlines are package-level (one
   per package × finding, matching `delta.json` and the count outputs), while
   a table row is one *distinct* finding across every package carrying it.
