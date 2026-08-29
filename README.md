@@ -130,8 +130,8 @@ starts — download the `delta-artifact` instead.
   when the monitor *stops running*.
 - **Quota**: Community accounts are metered in monthly entitlement units.
   The action checks `rl-protect server list` after each scan and warns in
-  the job summary at ≥85% usage. Daily cadence is plenty; the database
-  doesn't update faster than that.
+  the job summary at ≥85% usage. A daily or twice-daily cadence is
+  recommended.
 - **Ecosystems**: whatever rl-protect supports — npm, PyPI, RubyGems.
   Modern `yarn.lock` (Yarn 2+) is not supported by rl-protect.
 - **Monitor the lockfile, not the manifest** — otherwise you're monitoring
