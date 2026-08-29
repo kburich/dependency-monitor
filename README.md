@@ -58,10 +58,10 @@ commits it. Subsequent runs alert only on deltas:
 
 ## Alerting
 
-Alerts are delivered as GitHub Issues. When a scan finds something new — a
-malware verdict, a CVE, or a finding that got worse — the action opens a
-rolling issue for it, or comments on the one already open. When a finding
-goes away, that is reported as a comment on the same issue.
+Alerts are delivered as GitHub Issues by default. When a scan finds
+something new — a malware verdict, a CVE, or a finding that got worse — the
+action opens a rolling issue for it, or comments on the one already open.
+When a finding goes away, that is reported as a comment on the same issue.
 
 The monitor alerts; it does not track. Each rolling issue is an append-only
 log: its body is the delta that opened it, and every later delta is a
