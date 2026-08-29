@@ -1,10 +1,8 @@
 # rl-protect-monitor
 
 GitHub Action that periodically re-scans your dependencies for security
-issues and alerts you when something changes. Scanning is done by
-[ReversingLabs rl-protect](https://docs.secure.software/); alerts arrive as
-GitHub Issues: a new malware verdict, a new CVE, or a worsened finding opens
-or updates one, and resolutions are reported as comments on the open thread.
+issues with [ReversingLabs rl-protect](https://docs.secure.software/) and
+alerts you when something changes.
 
 ## Why a monitor?
 
