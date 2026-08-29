@@ -1,8 +1,7 @@
 name: Dependency malware & vulnerability monitor (rl-protect)
 description: >-
   Periodically re-scans your dependencies for security issues with
-  ReversingLabs rl-protect and alerts you (via GitHub Issues) when
-  something changes — delta-only alerts against a committed baseline.
+  ReversingLabs rl-protect and alerts you when something changes.
 author: Kresimir Buric
 branding:
   icon: shield
