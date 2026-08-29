@@ -66,9 +66,9 @@ When a finding goes away, that is reported as a comment on the same issue.
 The monitor alerts; it does not track. Each rolling issue is an append-only
 log: its body is the delta that opened it, and every later delta is a
 comment. Nothing is edited, so the thread is the complete history, newest at
-the bottom. There is no outstanding count:
-track remediation where you track work, and close the issue when you're done
-with the thread — the next alert opens a fresh one.
+the bottom. There is no outstanding count: track remediation where you track
+work, and close the issue when you're done with the thread — the next alert
+opens a fresh one.
 
 **Email.** An issue comment is an email to everyone subscribed, and the
 comment is written for that: the headline sits outside the `<details>`
