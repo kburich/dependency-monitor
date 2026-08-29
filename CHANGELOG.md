@@ -27,35 +27,6 @@ drops the `stats` block and the per-record `alerted` flags) in one extra
 baseline commit, and resolutions now notify subscribers where they used to
 be silent.
 
-### Changed
-
-- Each run's delta is the only thing ever written to the rolling issue: as
-  its body when it has to be opened, as a comment otherwise. The
-  comment-first/edit-second ordering, the `--body-only` refresh mode and the
-  stats renderer are gone with the body edits; the notifier makes exactly
-  one write per bucket per run.
-- Resolutions are posted as comments — and therefore notify. A run that
-  only resolves findings used to refresh the issue body silently; now the
-  stand-down lands in the thread, keeping it a complete changelog. It still
-  never *opens* an issue: a resolution of something never reported stays
-  unreported.
-- Malware comments drop the "treat this as an incident" sentence — the 🚨
-  title and headline already carry the urgency — and a resolution-only
-  malware comment drops the siren too. The standard bucket's headline label
-  is now "Dependency findings" (was "New findings"), since a delta can now
-  be resolutions alone.
-- Resolved-findings tables, in the comment and the job summary alike, drop
-  the Status column: a "❌ fail" beside a finding that has just gone away
-  read as if it were still failing.
-
-### Removed
-
-- The cumulative monitoring stats: monitoring-since, runs-with-alerts,
-  alerted-so-far, currently-outstanding and the pre-existing-backlog line,
-  along with everything that fed them. Baseline schema 3 drops the `stats`
-  block and the per-record `alerted` flags; older baselines are read as-is
-  and shed both in a single migration rewrite.
-
 ### Added
 
 - A `changed-count` output, the number of worsened findings. The diff engine
@@ -79,6 +50,25 @@ be silent.
 
 ### Changed
 
+- Each run's delta is the only thing ever written to the rolling issue: as
+  its body when it has to be opened, as a comment otherwise. The
+  comment-first/edit-second ordering, the `--body-only` refresh mode and the
+  stats renderer are gone with the body edits; the notifier makes exactly
+  one write per bucket per run.
+- Resolutions are posted as comments — and therefore notify. A run that
+  only resolves findings used to refresh the issue body silently; now the
+  stand-down lands in the thread, keeping it a complete changelog. It still
+  never *opens* an issue: a resolution of something never reported stays
+  unreported.
+- Malware comments drop the "treat this as an incident" sentence — the 🚨
+  title and headline already carry the urgency — and a resolution-only
+  malware comment drops the siren too. The standard bucket's headline label
+  is now "Dependency findings" (was "New findings"), since a delta can now
+  be resolutions alone.
+- Resolved-findings tables, in the comment and the job summary alike, drop
+  the Status column: a "❌ fail" beside a finding that has just gone away
+  read as if it were still failing.
+
 - The bundled actions move to their Node 24 majors: `actions/checkout@v7`,
   `actions/setup-python@v7` and `actions/upload-artifact@v7`. GitHub forced
   the old Node 20 majors onto Node 24 and annotated every run with a
@@ -92,6 +82,14 @@ be silent.
   "for filtering and subscribing", but GitHub has no per-label notification
   subscription — a reader who applied the label and expected to be paged got
   nothing. Use `assignees`, or watch the repository.
+
+### Removed
+
+- The cumulative monitoring stats: monitoring-since, runs-with-alerts,
+  alerted-so-far, currently-outstanding and the pre-existing-backlog line,
+  along with everything that fed them. Baseline schema 3 drops the `stats`
+  block and the per-record `alerted` flags; older baselines are read as-is
+  and shed both in a single migration rewrite.
 
 ### Fixed
 
