@@ -38,7 +38,7 @@ on:
   workflow_dispatch: {}
 jobs:
   monitor:
-    uses: kburich/rl-protect-monitor/.github/workflows/monitor.yml@v2
+    uses: kburich/rl-protect-monitor/.github/workflows/monitor.yml@v3
     permissions:
       contents: write   # commit the baseline back
       issues: write     # open/update notification issues

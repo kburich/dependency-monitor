@@ -97,7 +97,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - id: rl
-        uses: kburich/rl-protect-monitor@v2
+        uses: kburich/rl-protect-monitor@v3
         with:
           rl-token: ${{ secrets.rl-token }}
           manifest-path: ${{ inputs.manifest-path }}
