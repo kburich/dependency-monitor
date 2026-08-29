@@ -67,15 +67,9 @@ Each rolling issue is an append-only log: its body is the delta that opened
 it, and every later delta is a comment. Nothing is edited, so the thread is
 the complete history, newest at the bottom.
 
-**Email.** An issue comment is an email to everyone subscribed, and the
-comment is written for that: the headline sits outside the `<details>`
-collapse, which most mail clients ignore, so the mail shows the full delta.
-Someone has to *be* subscribed, though — the issues are opened by
-`github-actions[bot]`, which notifies only repository watchers, and a label
-cannot subscribe anyone. Either watch the repo (**All Activity**, or
-**Custom → Issues**) or set `assignees`, which subscribes those users when an
-issue is opened. Assignment happens at creation only: an existing issue is
-not retro-assigned, and someone who unassigns themselves stays unassigned.
+**Email.** An issue comment is an email to everyone subscribed to the issue.
+Use the `assignees` input to subscribe people automatically when an issue is
+opened; without it, only those watching the repository are notified.
 
 **Slack and everything else.** [GitHub's Slack app](https://github.com/integrations/slack)
 can subscribe a channel to the repo's issues filtered by label, so
