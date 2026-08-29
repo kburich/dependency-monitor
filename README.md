@@ -6,9 +6,9 @@ alerts you when something changes.
 
 ## Why a monitor?
 
-Your project manifest may not change, but the verdict on a package can: one
-that passed yesterday may be flagged as malware tomorrow (as happened with
-`ua-parser-js`, `event-stream`, and many others). A one-shot scan in CI
+Your project manifest may not change, but the verdict on a dependency can:
+one that passed yesterday may be flagged as malware tomorrow (as happened
+with `ua-parser-js`, `event-stream`, and many others). A one-shot scan in CI
 catches bad packages *entering* your project; this monitor catches packages
 that *go bad after* they're already in.
 
