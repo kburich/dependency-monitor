@@ -44,6 +44,9 @@ be silent.
   malware comment drops the siren too. The standard bucket's headline label
   is now "Dependency findings" (was "New findings"), since a delta can now
   be resolutions alone.
+- Resolved-findings tables, in the comment and the job summary alike, drop
+  the Status column: a "❌ fail" beside a finding that has just gone away
+  read as if it were still failing.
 
 ### Removed
 

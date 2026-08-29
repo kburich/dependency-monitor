@@ -184,6 +184,24 @@ class TestResolutions:
         comment = render_issue_comment(delta, critical=False)
         assert "**Dependency findings: 1 new · 1 resolved**" in comment
 
+    def test_resolved_rows_carry_no_status_column(self):
+        """A "❌ fail" beside a finding that just went away reads as if it
+        were still failing. The column goes, in the comment and the summary
+        alike, and rows differing only by status collapse into one."""
+        resolved = [cve("pkg:npm/a@1", status="fail"),
+                    cve("pkg:npm/b@1", status="warn")]
+        for md in (render_issue_comment(Delta(resolved=resolved), critical=False),
+                   render_summary(Delta(resolved=resolved), "m")):
+            header = [r for r in rows(md) if r.startswith("| Packages")][0]
+            assert "Status" not in header
+            assert "❌" not in md and "⚠️" not in md
+            assert len([r for r in rows(md) if "CVE-2025-47912" in r]) == 1
+
+    def test_new_rows_keep_the_status_column(self):
+        md = render_issue_comment(Delta(new=[cve("pkg:npm/a@1")]), critical=False)
+        assert "| Status |" in md
+        assert "❌ fail" in md
+
     def test_a_resolution_only_critical_comment_is_not_loud(self):
         """The siren marks an active alert; a resolution is the opposite."""
         comment = render_issue_comment(Delta(resolved=[malware()]),

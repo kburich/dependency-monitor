@@ -75,15 +75,19 @@ def _packages_cell(purls: List[str]) -> str:
     return "<br>".join(shown)
 
 
-def _group_findings(findings: List[Finding]) -> List[Tuple[Finding, List[str]]]:
+def _group_findings(findings: List[Finding],
+                    with_status: bool = True) -> List[Tuple[Finding, List[str]]]:
     """Collapse findings that are the same issue seen on several packages.
 
     Grouped on everything a row displays except the package, so a row never
-    merges rows that would have read differently.
+    merges rows that would have read differently — and never splits rows
+    that read the same, which is why the status leaves the key when the
+    column is not rendered.
     """
     groups: Dict[Tuple, Tuple[Finding, List[str]]] = {}
     for f in findings:
-        key = (f.category, f.finding_id, f.status, f.count, f.title)
+        key = (f.category, f.finding_id, f.status if with_status else None,
+               f.count, f.title)
         if key in groups:
             groups[key][1].append(f.purl)
         else:
@@ -128,19 +132,29 @@ def _table(header: str, rows: List[str], total_groups: int, max_rows: int,
     return out
 
 
-def _finding_table(findings: List[Finding], max_rows: int = MAX_ROWS_SUMMARY) -> str:
-    header = (
-        "| Packages | Category | Finding | Status | CVSS | Details |\n"
-        "|---|---|---|---|---|---|"
-    )
-    groups = _group_findings(findings)
-    rows = [
-        f"| {_packages_cell(purls)} | {_cell(f.category)} | "
-        f"{_cell(f.finding_id)} | "
-        f"{_STATUS_EMOJI.get(f.status, '')} {_cell(f.status)} | "
-        f"{_fmt_score(f.score)} | {_cell(f.title)} |"
-        for f, purls in groups
-    ]
+def _finding_table(findings: List[Finding], max_rows: int = MAX_ROWS_SUMMARY,
+                   resolved: bool = False) -> str:
+    """One row per distinct finding.
+
+    A resolved finding has no status any more — the one it carried is the
+    reason it was reported, and a "❌ fail" beside a finding that just went
+    away reads as if it were still failing — so resolved tables drop the
+    column.
+    """
+    columns = ["Packages", "Category", "Finding"]
+    if not resolved:
+        columns.append("Status")
+    columns += ["CVSS", "Details"]
+    header = (f"| {' | '.join(columns)} |\n"
+              f"|{'---|' * len(columns)}")
+    groups = _group_findings(findings, with_status=not resolved)
+    rows = []
+    for f, purls in groups:
+        cells = [_packages_cell(purls), _cell(f.category), _cell(f.finding_id)]
+        if not resolved:
+            cells.append(f"{_STATUS_EMOJI.get(f.status, '')} {_cell(f.status)}")
+        cells += [_fmt_score(f.score), _cell(f.title)]
+        rows.append(f"| {' | '.join(cells)} |")
     return _table(header, rows, len(groups), max_rows, len(findings))
 
 
@@ -235,7 +249,8 @@ def render_summary(delta: Delta, manifest: str, first_run: bool = False) -> str:
         lines += ["## Worsened findings", "", _change_table(delta.changed_standard), ""]
 
     if delta.resolved:
-        lines += ["## Resolved since last scan", "", _finding_table(delta.resolved), ""]
+        lines += ["## Resolved since last scan", "",
+                  _finding_table(delta.resolved, resolved=True), ""]
 
     counts = delta.to_dict()["counts"]
     lines += [
@@ -306,7 +321,7 @@ def render_issue_comment(delta: Delta, critical: bool,
                   _change_table(changed, MAX_ROWS_ISSUE), ""]
     if resolved:
         lines += ["### Resolved findings", "",
-                  _finding_table(resolved, MAX_ROWS_ISSUE), ""]
+                  _finding_table(resolved, MAX_ROWS_ISSUE, resolved=True), ""]
     lines += ["</details>"]
     return _clip("\n".join(lines))
 
