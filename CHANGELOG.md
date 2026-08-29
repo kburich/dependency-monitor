@@ -4,11 +4,11 @@ All notable changes to this action are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Consumers pin the floating major tag (`@v2`), which always points at the
-newest release in the `2.x` line. Pin an exact tag (`@v2.0.0`) if you need
+Consumers pin the floating major tag (`@v3`), which always points at the
+newest release in the `3.x` line. Pin an exact tag (`@v3.0.0`) if you need
 behaviour to stay frozen.
 
-## [Unreleased]
+## [3.0.0] - 2026-08-29
 
 The rolling issues become append-only alert logs. The issue body is written
 once, at creation, and carries that run's delta — the same rendering every
@@ -411,6 +411,7 @@ Initial release.
 - `alert-on-first-run` for repositories that want the initial backlog
   reported rather than absorbed into the baseline.
 
+[3.0.0]: https://github.com/kburich/rl-protect-monitor/compare/v2.0.0...v3.0.0
 [2.0.0]: https://github.com/kburich/rl-protect-monitor/compare/v1.2.0...v2.0.0
 [1.2.0]: https://github.com/kburich/rl-protect-monitor/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/kburich/rl-protect-monitor/compare/v1.0.0...v1.1.0

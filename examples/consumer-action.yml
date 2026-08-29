@@ -28,7 +28,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - id: rl
-        uses: kburich/rl-protect-monitor@v2
+        uses: kburich/rl-protect-monitor@v3
         with:
           rl-token: ${{ secrets.RL_TOKEN }}
           # manifest-path: package-lock.json   # omit to auto-detect
