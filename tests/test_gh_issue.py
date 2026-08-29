@@ -2,10 +2,10 @@
 
 `subprocess.run` is faked, so these assert the arguments the module *builds*,
 not that `gh` accepts them. That is enough for the invariant worth protecting:
-each run's delta is measured against the previous run's baseline and lives
-only in its comment — so on an existing issue the comment must be posted
-before the body edit, and a newly created issue must get the delta comment
-its stats body points at.
+the rolling issue is append-only — its body is written once, at creation,
+carrying that run's delta, and every later delta is a comment. Nothing is
+ever edited, so each delta's only durable copy is the body or comment that
+carries it, and a resolution-only delta must never open an issue.
 """
 
 import json
@@ -76,9 +76,6 @@ def label_creates(fake):
 def outputs(tmp_path):
     (tmp_path / "issue.title").write_text(
         "🚨 Malware/tampering detected in dependencies (package-lock.json)\n")
-    (tmp_path / "issue.md").write_text(
-        "rl-protect flagged **malware or tampering**.\n\n"
-        "### Monitoring stats\n\n- **Runs with alerts:** 3\n")
     (tmp_path / "issue_comment.md").write_text(
         "**🚨 Malware/tampering: 1 new**\n\n<details>\n"
         "<summary>Show the full delta</summary>\n\n"
@@ -88,13 +85,13 @@ def outputs(tmp_path):
 
 
 def notify(monkeypatch, fake, outputs, labels=("rl-protect-monitor",),
-           body_only=False, rc=0, assignees=()):
+           no_create=False, rc=0, assignees=()):
     monkeypatch.setattr(gh_issue.subprocess, "run", fake)
     argv = ["--repo", "owner/name",
             "--title-file", str(outputs / "issue.title"),
-            "--body-file", str(outputs / "issue.md")]
-    argv += (["--body-only"] if body_only
-             else ["--comment-file", str(outputs / "issue_comment.md")])
+            "--comment-file", str(outputs / "issue_comment.md")]
+    if no_create:
+        argv += ["--no-create"]
     for label in labels:
         argv += ["--label", label]
     for user in assignees:
@@ -104,53 +101,50 @@ def notify(monkeypatch, fake, outputs, labels=("rl-protect-monitor",),
 
 
 class TestLabelCreation:
-    def test_every_label_is_created(self, monkeypatch, outputs):
-        fake = notify(monkeypatch, FakeGh(open_number=1), outputs,
+    def test_every_label_is_created_before_the_issue(self, monkeypatch,
+                                                     outputs):
+        fake = notify(monkeypatch, FakeGh(open_number=None), outputs,
                       labels=("rl-protect-malware", "rl-protect-monitor"))
         assert [c[3] for c in label_creates(fake)] == ["rl-protect-malware",
                                                        "rl-protect-monitor"]
 
     def test_an_existing_label_is_not_overwritten(self, monkeypatch, outputs):
         """`--force` makes this an upsert, which resets a maintainer's own
-        colour and description on every notifying run."""
-        fake = notify(monkeypatch, FakeGh(open_number=1), outputs)
+        colour and description on the run that used it."""
+        fake = notify(monkeypatch, FakeGh(open_number=None), outputs)
         assert not any("--force" in cmd for cmd in label_creates(fake))
+
+    def test_commenting_touches_no_labels(self, monkeypatch, outputs):
+        """Labels are applied at creation, the only moment they are needed;
+        commenting on an existing issue must not make label API calls."""
+        fake = notify(monkeypatch, FakeGh(open_number=7), outputs)
+        assert label_creates(fake) == []
 
 
 class TestExistingIssue:
-    def test_comment_is_posted_before_the_body_edit(self, monkeypatch, outputs):
-        """Reordering these two reintroduces the delta loss fixed in 1.2.0."""
-        fake = notify(monkeypatch, FakeGh(open_number=7), outputs)
-        verbs = fake.verbs()
-        assert verbs.index("comment") < verbs.index("edit")
-
-    def test_comment_carries_the_delta_file(self, monkeypatch, outputs):
+    def test_the_delta_is_posted_as_a_comment(self, monkeypatch, outputs):
         fake = notify(monkeypatch, FakeGh(open_number=7), outputs)
         comment = fake.call("comment")
+        assert comment[3] == "7"
         assert flag(comment, "--body-file") == str(outputs / "issue_comment.md")
         assert "--body" not in comment
 
-    def test_edit_targets_the_open_issue_with_body_and_title(self, monkeypatch,
-                                                             outputs):
+    def test_nothing_is_edited(self, monkeypatch, outputs):
+        """Append-only: no body refresh, no title refresh — an edit call
+        here means the thread is no longer a faithful changelog."""
         fake = notify(monkeypatch, FakeGh(open_number=7), outputs)
-        edit = fake.call("edit")
-        assert edit[3] == "7"
-        assert flag(edit, "--body-file") == str(outputs / "issue.md")
-        assert flag(edit, "--title").startswith("🚨 Malware/tampering")
+        assert fake.verbs() == ["list", "comment"]
 
     def test_no_second_issue_is_opened(self, monkeypatch, outputs):
         fake = notify(monkeypatch, FakeGh(open_number=7), outputs)
         assert "create" not in fake.verbs()
 
     def test_comment_file_is_required(self, monkeypatch, outputs):
-        """Falling back to the body would post the stats page as the delta
-        comment and the findings would never reach the issue."""
         fake = FakeGh(open_number=7)
         monkeypatch.setattr(gh_issue.subprocess, "run", fake)
         with pytest.raises(SystemExit):
             gh_issue.run(["--repo", "owner/name",
                           "--title-file", str(outputs / "issue.title"),
-                          "--body-file", str(outputs / "issue.md"),
                           "--label", "rl-protect-monitor"])
         assert fake.issue_calls() == []
 
@@ -163,21 +157,22 @@ class TestExistingIssue:
         with pytest.raises(SystemExit):
             gh_issue.run(["--repo", "owner/name",
                           "--title-file", str(outputs / "issue.title"),
-                          "--body-file", str(outputs / "issue.md"),
                           "--comment-file", "",
                           "--label", "rl-protect-monitor"])
         assert fake.calls == []
 
 
 class TestNoOpenIssue:
-    def test_creation_is_followed_by_the_delta_comment(self, monkeypatch,
-                                                       outputs):
-        """The stats body points at the newest comment — it has to exist."""
+    def test_the_issue_is_created_with_the_delta_as_its_body(self, monkeypatch,
+                                                             outputs):
+        """Creation is what notifies, with the body — so the body must be
+        the delta itself, and no separate comment should follow it: the
+        thread would open with the same delta twice."""
         fake = notify(monkeypatch, FakeGh(open_number=None), outputs)
-        assert fake.verbs() == ["list", "create", "comment"]
-        comment = fake.call("comment")
-        assert comment[3] == "9"  # parsed from the URL `gh issue create` printed
-        assert flag(comment, "--body-file") == str(outputs / "issue_comment.md")
+        assert fake.verbs() == ["list", "create"]
+        create = fake.call("create")
+        assert flag(create, "--body-file") == str(outputs / "issue_comment.md")
+        assert flag(create, "--title").startswith("🚨 Malware/tampering")
 
     def test_create_carries_every_label(self, monkeypatch, outputs):
         fake = notify(monkeypatch, FakeGh(open_number=None), outputs,
@@ -185,17 +180,6 @@ class TestNoOpenIssue:
         create = fake.call("create")
         labels = [create[i + 1] for i, arg in enumerate(create) if arg == "--label"]
         assert labels == ["rl-protect-monitor", "rl-protect-malware"]
-
-    def test_create_opens_the_issue_with_the_stats_body_and_title(
-            self, monkeypatch, outputs):
-        """The create path had no argv assertion at all: swapping the comment
-        file in as the body opens every rolling issue with a delta as its
-        landing page, and the stats body never reaches the issue that first
-        creates it."""
-        fake = notify(monkeypatch, FakeGh(open_number=None), outputs)
-        create = fake.call("create")
-        assert flag(create, "--body-file") == str(outputs / "issue.md")
-        assert flag(create, "--title").startswith("🚨 Malware/tampering")
 
     def test_rolling_issue_is_looked_up_by_the_first_label(self, monkeypatch,
                                                            outputs):
@@ -226,47 +210,35 @@ class TestNoOpenIssue:
         with pytest.raises(subprocess.CalledProcessError):
             gh_issue.run(["--repo", "owner/name",
                           "--title-file", str(outputs / "issue.title"),
-                          "--body-file", str(outputs / "issue.md"),
                           "--comment-file", str(outputs / "issue_comment.md"),
                           "--label", "rl-protect-monitor"])
         assert "Issues are disabled" in capsys.readouterr().err
 
 
-class TestBodyOnlyRefresh:
-    """A run that only resolved findings. Its counters moved, so the stats
-    body is stale and must be refreshed — but there is nothing to report, so
-    nothing is posted and no issue is opened."""
+class TestNoCreate:
+    """A resolution-only delta: commented onto the bucket's open issue, but
+    an issue must never be opened to announce that something nobody was ever
+    told about has been fixed."""
 
-    def test_the_body_is_edited_and_nothing_is_posted(self, monkeypatch,
-                                                       outputs):
+    def test_an_open_issue_still_gets_the_resolution_comment(self,
+                                                             monkeypatch,
+                                                             outputs):
         fake = notify(monkeypatch, FakeGh(open_number=7), outputs,
-                      body_only=True)
-        assert fake.verbs() == ["list", "edit"]
-        edit = fake.call("edit")
-        assert edit[3] == "7"
-        assert flag(edit, "--body-file") == str(outputs / "issue.md")
+                      no_create=True)
+        assert fake.verbs() == ["list", "comment"]
+        assert fake.call("comment")[3] == "7"
 
     def test_no_issue_is_opened_when_none_is_open(self, monkeypatch, outputs):
-        """Opening an issue to announce that nothing is wrong is noise."""
         fake = notify(monkeypatch, FakeGh(open_number=None), outputs,
-                      body_only=True)
+                      no_create=True)
         assert fake.verbs() == ["list"]
+        assert label_creates(fake) == []
 
-    def test_body_only_and_comment_file_are_mutually_exclusive(self,
-                                                               monkeypatch,
-                                                               outputs):
-        """Both together is ambiguous: --body-only would silently win and the
-        delta it was given would never be posted anywhere."""
-        fake = FakeGh(open_number=7)
-        monkeypatch.setattr(gh_issue.subprocess, "run", fake)
-        with pytest.raises(SystemExit):
-            gh_issue.run(["--repo", "owner/name",
-                          "--title-file", str(outputs / "issue.title"),
-                          "--body-file", str(outputs / "issue.md"),
-                          "--comment-file", str(outputs / "issue_comment.md"),
-                          "--body-only",
-                          "--label", "rl-protect-monitor"])
-        assert fake.calls == []
+    def test_never_assigns_when_nothing_was_created(self, monkeypatch,
+                                                    outputs):
+        fake = notify(monkeypatch, FakeGh(open_number=None), outputs,
+                      no_create=True, assignees=("alice",))
+        assert not any("--add-assignee" in cmd for cmd in fake.calls)
 
 
 #: How the two buckets of one monitor are labelled: a marker naming bucket and
@@ -286,10 +258,10 @@ OTHER_MALWARE_ISSUE = (3, ["rl-protect-malware/req", "rl-protect-malware",
 class TestBucketIsolation:
     """Markers name bucket *and* monitor, so every lookup is unambiguous.
 
-    Both issues carry the bare `rl-protect-monitor` label, so a lookup by that
-    alone could land the standard bucket's delta on the malware incident —
-    commenting into that thread and replacing its title and stats body. The
-    marker is what keeps them apart, with no exclusion rules involved.
+    Both issues carry the bare `rl-protect-monitor` label, so a lookup by
+    that alone could land the standard bucket's delta on the malware
+    incident's thread. The marker is what keeps them apart, with no
+    exclusion rules involved.
     """
 
     def test_the_malware_issue_is_not_adopted_as_the_standard_issue(
@@ -298,30 +270,29 @@ class TestBucketIsolation:
                       FakeGh(open_issues=[MALWARE_ISSUE, STANDARD_ISSUE]),
                       outputs, labels=STANDARD_LABELS)
         assert fake.call("comment")[3] == "1"
-        assert fake.call("edit")[3] == "1"
 
     def test_a_new_issue_opens_when_only_the_malware_issue_is_open(
             self, monkeypatch, outputs):
-        """A second standard issue is recoverable; a clobbered incident is
-        not — the malware issue's counters would be gone for good."""
+        """A second standard issue is recoverable; a delta commented into
+        the malware incident's thread is not."""
         fake = notify(monkeypatch, FakeGh(open_issues=[MALWARE_ISSUE]),
                       outputs, labels=STANDARD_LABELS)
-        assert "edit" not in fake.verbs()
+        assert "comment" not in fake.verbs()
         assert "create" in fake.verbs()
 
     def test_the_critical_lookup_finds_its_own_issue(self, monkeypatch,
                                                      outputs):
         fake = notify(monkeypatch, FakeGh(open_issues=[MALWARE_ISSUE]),
                       outputs, labels=CRITICAL_LABELS)
-        assert fake.call("edit")[3] == "2"
+        assert fake.call("comment")[3] == "2"
 
     def test_another_monitors_issue_is_never_adopted(self, monkeypatch,
                                                      outputs):
         """Two manifests scanned in one repo each own their thread: adopting
-        the other's would interleave deltas and overwrite its stats body."""
+        the other's would interleave their deltas."""
         fake = notify(monkeypatch, FakeGh(open_issues=[OTHER_MALWARE_ISSUE]),
                       outputs, labels=CRITICAL_LABELS)
-        assert "edit" not in fake.verbs()
+        assert "comment" not in fake.verbs()
         assert "create" in fake.verbs()
 
     def test_no_exclusion_is_needed_to_get_there(self, monkeypatch, outputs):
@@ -368,22 +339,33 @@ class BadCreateOutputGh(FakeGh):
 
 
 class TestUnparseableCreateOutput:
-    def test_issue_is_refound_by_label_and_gets_the_comment(self, monkeypatch,
-                                                            outputs):
-        """The delta lives only in the comment — recover the number by label."""
+    """The number only matters for assignment now: the delta is already
+    durable in the body the create call just wrote, so a lost number costs
+    at worst a subscription — a warning, never the run."""
+
+    def test_issue_is_refound_by_label_for_the_assignment(self, monkeypatch,
+                                                          outputs):
+        fake = notify(monkeypatch, BadCreateOutputGh(found_after_create=9),
+                      outputs, assignees=("alice",))
+        assert fake.verbs() == ["list", "create", "list", "edit"]
+        edit = fake.call("edit")
+        assert edit[3] == "9"
+        assert flag(edit, "--add-assignee") == "alice"
+
+    def test_an_unfindable_issue_warns_instead_of_failing(self, monkeypatch,
+                                                          outputs, capsys):
+        fake = notify(monkeypatch, BadCreateOutputGh(found_after_create=None),
+                      outputs, assignees=("alice",))
+        assert "edit" not in fake.verbs()
+        err = capsys.readouterr().err
+        assert "::warning::" in err and "alice" in err
+
+    def test_without_assignees_the_number_is_not_even_looked_up(self,
+                                                                monkeypatch,
+                                                                outputs):
         fake = notify(monkeypatch, BadCreateOutputGh(found_after_create=9),
                       outputs)
-        assert fake.verbs() == ["list", "create", "list", "comment"]
-        comment = fake.call("comment")
-        assert comment[3] == "9"
-        assert flag(comment, "--body-file") == str(outputs / "issue_comment.md")
-
-    def test_run_fails_when_the_issue_cannot_be_refound(self, monkeypatch,
-                                                        outputs):
-        """Exiting 0 here would commit the baseline and lose the delta."""
-        fake = notify(monkeypatch, BadCreateOutputGh(found_after_create=None),
-                      outputs, rc=1)
-        assert "comment" not in fake.verbs()
+        assert fake.verbs() == ["list", "create"]
 
 
 class TestAssignees:
@@ -391,30 +373,32 @@ class TestAssignees:
 
     A label cannot subscribe anyone — GitHub has no per-label notification —
     so on a repository nobody watches, an unassigned rolling issue alerts into
-    a void. These pin that the assignment happens, that it happens early
-    enough to matter, and that it can never cost us the alert itself.
+    a void. These pin that the assignment happens on creation, and that it
+    can never cost us the alert itself.
     """
 
     def test_assignees_are_added_to_a_newly_created_issue(self, monkeypatch,
                                                           outputs):
         fake = notify(monkeypatch, FakeGh(open_number=None), outputs,
                       assignees=("alice", "bob"))
+        assert fake.verbs() == ["list", "create", "edit"]
         edit = fake.call("edit")
         assert edit[3] == "9"
         added = [edit[i + 1] for i, arg in enumerate(edit)
                  if arg == "--add-assignee"]
         assert added == ["alice", "bob"]
 
-    def test_assignment_precedes_the_delta_comment(self, monkeypatch, outputs):
-        """Assigning after the comment would subscribe them one delta too
-        late: they would be told they own the issue, not what it says."""
+    def test_assignment_is_not_folded_into_the_create_call(self, monkeypatch,
+                                                           outputs):
+        """A typo'd username on `gh issue create --assignee` fails the
+        creation itself — the alert must land before anyone is subscribed."""
         fake = notify(monkeypatch, FakeGh(open_number=None), outputs,
                       assignees=("alice",))
-        assert fake.verbs() == ["list", "create", "edit", "comment"]
+        assert "--assignee" not in fake.call("create")
 
     def test_no_assignees_means_no_edit_call(self, monkeypatch, outputs):
         fake = notify(monkeypatch, FakeGh(open_number=None), outputs)
-        assert fake.verbs() == ["list", "create", "comment"]
+        assert fake.verbs() == ["list", "create"]
 
     def test_an_existing_issue_is_not_reassigned(self, monkeypatch, outputs):
         """Re-adding every run would revert a maintainer who unassigned
@@ -437,13 +421,6 @@ class TestAssignees:
 
         fake = notify(monkeypatch, FailingAssignGh(open_number=None), outputs,
                       assignees=("alicce",))
-        assert "comment" in fake.verbs()
+        assert "create" in fake.verbs()
         err = capsys.readouterr().err
         assert "::warning::" in err and "alicce" in err
-
-    def test_body_only_never_assigns(self, monkeypatch, outputs):
-        """A resolution-only run opens nothing, so there is nothing to assign
-        and its edit must stay a plain body refresh."""
-        fake = notify(monkeypatch, FakeGh(open_number=7), outputs,
-                      body_only=True, assignees=("alice",))
-        assert not any("--add-assignee" in cmd for cmd in fake.calls)

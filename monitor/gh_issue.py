@@ -1,34 +1,33 @@
-"""Create or update the rolling notification issue via the `gh` CLI.
+"""Create or comment on the rolling notification issue via the `gh` CLI.
 
 One open issue per severity bucket, identified by its first (marker) label.
 Markers are per monitor and per bucket — `rl-protect-monitor/<id>` and
 `rl-protect-malware/<id>`, derived in `monitor.identity` — so a lookup can
 never resolve to the other bucket's thread or to another monitor's. The
-issue carries the bare `rl-protect-monitor` / `rl-protect-malware` labels too,
-but only for humans to filter on. The body is the
-issue's landing page — cumulative stats, edited to current on every alert —
-while each run's delta is posted as a comment (comments notify subscribers;
-body edits do not). Each delta is measured against the baseline the previous
-run wrote, so consecutive deltas never overlap: the comment is the only
-durable copy of its delta.
+issue carries the bare `rl-protect-monitor` / `rl-protect-malware` labels
+too, but only for humans to filter on.
 
-On a new delta:
-  - existing open issue: post the delta comment first, then edit the body —
-    a failure between the two calls must not lose the delta;
-  - no open issue: create it (creation itself notifies, with the body), assign
-    anyone named by `--assignee` so they are subscribed before the delta
-    lands, then post the delta comment so the thread holds the delta the body
-    points at.
+The issue is append-only. Its body is written once, at creation, and carries
+that run's delta; every later run's delta — resolutions included — is posted
+as a comment, and nothing is ever edited. Each delta is measured against the
+baseline the previous run wrote, so consecutive deltas never overlap: the
+thread holds the only durable copy of every delta (the body for the first,
+a comment for each later one) and reads as a changelog, newest at the bottom.
 
-A run that only *resolved* findings passes `--body-only`: the stats it shows
-have moved, so the body is refreshed, but there is nothing to report and a
-body edit does not notify. It never opens an issue.
+On a delta:
+  - existing open issue: post the delta comment. Nothing else — no body or
+    title refresh, ever.
+  - no open issue: create it with the delta as its body (creation itself
+    notifies, with the body), then assign anyone named by `--assignee` so
+    they are subscribed to the comments that follow.
+  - no open issue and `--no-create`: do nothing. Resolution-only runs pass
+    this — an issue must not be opened to announce that something nobody
+    was ever told about has been fixed.
 
 Usage:
     python -m monitor.gh_issue \
         --repo owner/name \
         --title-file out/issue_critical.title \
-        --body-file out/issue_critical.md \
         --comment-file out/issue_critical_comment.md \
         --label rl-protect-malware/package-lock.json \
         --label rl-protect-malware --label rl-protect-monitor
@@ -75,12 +74,15 @@ def _ensure_labels(repo: str, labels: List[str]) -> None:
     """Create each label if it does not exist yet, and otherwise leave it be.
 
     Deliberately without `--force`, which is an upsert: it reset the colour
-    and description on every notifying run, so a maintainer who restyled a
+    and description on every run that used it, so a maintainer who restyled a
     label to fit their scheme — or described it for their team — had the
     change silently reverted by the next scan. Creation is the only thing
     this action needs; how the label looks afterwards is the repo's own.
     `gh` exits nonzero when the label already exists, which is the expected
     steady state and is what `check=False` is swallowing.
+
+    Only called when an issue is about to be created — the one moment the
+    labels are applied. Commenting on an existing issue touches no labels.
     """
     for label in labels:
         subprocess.run(
@@ -96,8 +98,8 @@ def _find_open_issue(repo: str, label: str) -> Optional[int]:
 
     The marker names one bucket of one monitor, so the newest match *is* the
     answer and one row is enough. `gh issue list` is the strongly consistent
-    endpoint, which matters because the post-creation lookup below re-reads an
-    issue made seconds earlier — the search index lags behind writes.
+    endpoint, which matters because the post-creation lookup below re-reads
+    an issue made seconds earlier — the search index lags behind writes.
     """
     out = _gh(["issue", "list", "--repo", repo, "--state", "open",
                "--label", label, "--json", "number", "--limit", "1"])
@@ -115,8 +117,10 @@ def _assign(repo: str, number: str, assignees: List[str]) -> None:
 
     Best-effort on purpose. A typo'd or unauthorised username must never stop
     a malware alert from being delivered, so a failure here warns and returns
-    rather than raising. GitHub also drops assignees who lack repo access
-    without erroring, so the warning is the only signal in either direction.
+    rather than raising — and it is not folded into the `gh issue create`
+    call for the same reason: a bad username there fails the creation itself.
+    GitHub also drops assignees who lack repo access without erroring, so the
+    warning is the only signal in either direction.
 
     Only ever called on issue creation. Re-adding an assignee on every run
     would revert a maintainer who deliberately unassigned themselves — the
@@ -139,16 +143,17 @@ def _assign(repo: str, number: str, assignees: List[str]) -> None:
 def run(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="rl-protect-monitor-notify")
     parser.add_argument("--repo", required=True)
-    parser.add_argument("--title-file", required=True, type=_nonempty_path)
-    parser.add_argument("--body-file", required=True, type=_nonempty_path,
-                        help="Issue body: cumulative stats landing page")
-    parser.add_argument("--comment-file", type=_nonempty_path,
-                        help="Delta comment: the only durable copy of this "
-                        "run's findings — the body is just the stats page")
-    parser.add_argument("--body-only", action="store_true",
-                        help="Refresh an existing issue's stats body without "
-                        "commenting, for a run that only resolved findings. "
-                        "Never opens an issue: there is nothing to report.")
+    parser.add_argument("--title-file", required=True, type=_nonempty_path,
+                        help="Title used if the issue has to be created; an "
+                        "existing issue's title is never touched")
+    parser.add_argument("--comment-file", required=True, type=_nonempty_path,
+                        help="This run's delta: posted as a comment on the "
+                        "open rolling issue, or — when none is open — used "
+                        "as the body the issue is created with")
+    parser.add_argument("--no-create", action="store_true",
+                        help="Never open an issue: comment if one is open, "
+                        "otherwise do nothing. Passed for resolution-only "
+                        "deltas, which have nothing to alert on.")
     parser.add_argument("--label", action="append", required=True,
                         dest="labels", help="May be given multiple times; "
                         "the first label identifies the rolling issue")
@@ -158,67 +163,50 @@ def run(argv: Optional[List[str]] = None) -> int:
                         "given multiple times. Without one, only watchers of "
                         "the repository are notified.")
     args = parser.parse_args(argv)
-    # Exactly one of the two: silently falling back to the body would post
-    # the stats page as the delta comment, and a delta with no comment at all
-    # has no durable copy anywhere.
-    if bool(args.comment_file) == args.body_only:
-        parser.error("pass either --comment-file or --body-only")
 
-    title = args.title_file.read_text().strip()
-    comment_file = args.comment_file
     marker_label = args.labels[0]
-
-    _ensure_labels(args.repo, args.labels)
     number = _find_open_issue(args.repo, marker_label)
 
-    if args.body_only:
-        if number is None:
-            print(f"No open issue labeled {marker_label} — nothing to refresh")
-            return 0
-        _gh(["issue", "edit", str(number), "--repo", args.repo,
-             "--title", title, "--body-file", str(args.body_file)],
-            capture=False)
-        print(f"Refreshed the stats body on issue #{number} (no new findings)")
+    if number is not None:
+        _gh(["issue", "comment", str(number), "--repo", args.repo,
+             "--body-file", str(args.comment_file)], capture=False)
+        print(f"Posted the delta as a comment on issue #{number}")
         return 0
 
-    if number is None:
-        out = _gh(["issue", "create", "--repo", args.repo,
-                   "--title", title,
-                   "--body-file", str(args.body_file)]
-                  + [arg for label in args.labels for arg in ("--label", label)])
-        url = out.strip().splitlines()[-1] if out.strip() else ""
-        print(f"Created new issue labeled {marker_label}"
-              + (f": {url}" if url else ""))
-        # `gh issue create` prints the new issue's URL; the delta comment
-        # needs its number. The comment is the delta's only durable copy,
-        # so if the URL is unparseable, re-find the issue by its marker
-        # label — and fail rather than drop the delta: a nonzero exit keeps
-        # the baseline uncommitted, so the next run regenerates it.
+    if args.no_create:
+        print(f"No open issue labeled {marker_label} — resolution-only "
+              "delta, nothing to alert on, no issue opened")
+        return 0
+
+    title = args.title_file.read_text().strip()
+    _ensure_labels(args.repo, args.labels)
+    out = _gh(["issue", "create", "--repo", args.repo,
+               "--title", title,
+               "--body-file", str(args.comment_file)]
+              + [arg for label in args.labels for arg in ("--label", label)])
+    url = out.strip().splitlines()[-1] if out.strip() else ""
+    print(f"Created new issue labeled {marker_label}"
+          + (f": {url}" if url else ""))
+
+    if args.assignees:
+        # `gh issue create` prints the new issue's URL; assignment needs its
+        # number. If the URL is unparseable, re-find the issue by its marker
+        # label — and if that fails too, warn rather than fail: the delta is
+        # already durable in the body just created, and a missed assignment
+        # is recoverable by hand.
         tail = url.rsplit("/", 1)[-1] if url else ""
         if not tail.isdigit():
             print("Could not parse the new issue's number from `gh issue "
                   "create` output — looking it up by label", file=sys.stderr)
             number = _find_open_issue(args.repo, marker_label)
-            if number is None:
-                print(f"No open issue labeled {marker_label} found after "
-                      "creation — delta comment not posted", file=sys.stderr)
-                return 1
-            tail = str(number)
-        # Before the comment, so an assignee is subscribed in time to be
-        # notified of the delta itself rather than only of the assignment.
-        _assign(args.repo, tail, args.assignees)
-        _gh(["issue", "comment", tail, "--repo", args.repo,
-             "--body-file", str(comment_file)], capture=False)
-    else:
-        # Comment first: the body edit replaces the stats snapshot, but the
-        # delta exists only here — a failure between the two calls must not
-        # lose it.
-        _gh(["issue", "comment", str(number), "--repo", args.repo,
-             "--body-file", str(comment_file)], capture=False)
-        _gh(["issue", "edit", str(number), "--repo", args.repo,
-             "--title", title, "--body-file", str(args.body_file)],
-            capture=False)
-        print(f"Updated existing issue #{number}")
+            tail = str(number) if number is not None else ""
+        if tail:
+            _assign(args.repo, tail, args.assignees)
+        else:
+            print("::warning::Could not determine the new issue's number, so "
+                  f"{', '.join(args.assignees)} were not assigned — the "
+                  "issue itself was created. Assign them by hand.",
+                  file=sys.stderr)
     return 0
 
 

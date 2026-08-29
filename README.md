@@ -1,18 +1,14 @@
 # rl-protect-monitor
 
-GitHub Action that periodically re-scans your dependency manifest with
-[ReversingLabs rl-protect](https://docs.secure.software/) and alerts you —
-via GitHub Issues — **only when something changes**: a new malware verdict,
-a new CVE, or a worsened finding. Resolutions update the issue quietly,
-without notifying.
+GitHub Action that periodically re-scans your dependencies for security
+issues with [ReversingLabs rl-protect](https://docs.secure.software/) and
+alerts you when something changes.
 
 ## Why a monitor?
 
-`rl-protect scan` is a lookup against the Spectra Assure Community database,
-not a local analysis. Your lockfile doesn't change, but the verdict on a
-pinned package can: a dependency that passed yesterday may be flagged as
-malware tomorrow when the database is updated (as happened with
-`ua-parser-js`, `event-stream`, and many others). A one-shot scan in CI
+Your project manifest may not change, but the verdict on a dependency can:
+one that passed yesterday may be flagged as malware tomorrow (as happened
+with `ua-parser-js`, `event-stream`, and many others). A one-shot scan in CI
 catches bad packages *entering* your project; this monitor catches packages
 that *go bad after* they're already in.
 
@@ -58,17 +54,28 @@ commits it. Subsequent runs alert only on deltas:
 - **Vulnerabilities / secrets / licenses / hardening** → a separate,
   quieter rolling issue labeled `rl-protect-monitor`.
 
-Both issues roll rather than duplicate: each delta is posted as a collapsible
-comment — a visible one-line headline with the tables tucked into a
-`<details>` block, so the thread scans like a changelog. Comments are what
-notify subscribers, and most email clients ignore `<details>`, so the
-notification email still shows the full delta. The issue body is the landing
-page: cumulative stats (monitoring since, runs with alerts, findings
-alerted/resolved, currently outstanding) and a pointer at the newest comment.
-Consecutive deltas don't overlap — each is measured against the previous
-run's baseline — so the comment thread is the complete history. See
-[examples/](examples/) for the direct-action variant with custom steps
-(e.g. Slack on malware).
+## Alerting
+
+Alerts are delivered as GitHub Issues by default. When a scan finds
+something new — a malware verdict, a CVE, or a finding that got worse — the
+action opens a rolling issue for it, or comments on the one already open.
+When a finding goes away, that is reported as a comment on the same issue.
+
+Each rolling issue is an append-only log: its body is the delta that opened
+it, and every later delta is a comment. Nothing is edited, so the thread is
+the complete history, newest at the bottom.
+
+**Email.** An issue comment is an email to everyone subscribed to the issue.
+Use the `assignees` input to subscribe people automatically when an issue is
+opened; without it, only those watching the repository are notified.
+
+**Slack and everything else.** [GitHub's Slack app](https://github.com/integrations/slack)
+can subscribe a channel to the repo's issues filtered by label, so
+`rl-protect-malware` alone can page a channel. Or guard your own step with
+the action's [outputs](#outputs) — `has-critical-alerts`, `has-alerts` —
+and post anywhere; [examples/consumer-action.yml](examples/consumer-action.yml)
+shows a Slack webhook on malware. `notify: none` skips the issues entirely
+and leaves the outputs and `delta-artifact` to drive your channel.
 
 ## Inputs
 
@@ -81,7 +88,7 @@ run's baseline — so the comment thread is the complete history. See
 | `baseline-path` | `.rl-protect/baseline.json` | Path the baseline is stored at, within whichever branch holds it |
 | `monitor-id` | `auto` | Names this monitor's baseline branch and rolling issues; derived from the manifest so two monitors in one repo stay apart. Set it to separate two monitors on the same manifest |
 | `baseline-branch` | `auto` | `auto` → `rl-protect-baseline/<monitor-id>`, an orphan branch your default branch's protection doesn't cover. A name uses that branch; empty commits the baseline to the default branch, where it shows up in PR diffs but needs direct pushes to be allowed |
-| `commit-baseline` | `true` | Commit + push the updated baseline. If `false`, persist the rewritten baseline yourself — against a stale baseline every run repeats the same alerts and the issue's cumulative stats reset to a single-run snapshot |
+| `commit-baseline` | `true` | Commit + push the updated baseline. If `false`, persist the rewritten baseline yourself — against a stale baseline every run repeats the same alerts |
 | `notify` | `issue` | `issue` / `none` (job summary is always written) |
 | `issue-label` | `rl-protect-monitor` | Extra label on both rolling issues, for filtering. It doesn't identify them — the per-monitor marker label does |
 | `assignees` | — | Comma-separated usernames assigned when a rolling issue is opened, which subscribes them. Without it, only repo watchers are notified |
@@ -93,10 +100,15 @@ run's baseline — so the comment thread is the complete history. See
 
 ## Outputs
 
-`new-count`, `new-critical-count`, `resolved-count`, `has-alerts`,
+`new-count`, `changed-count` (worsened), `new-critical-count` (new *or*
+worsened malware/tampering), `resolved-count`, `has-alerts`,
 `has-critical-alerts`, `has-updates` (alerts *or* resolutions), `first-run`,
 `delta-json` (path to the machine-readable delta), `delta-artifact` (name of
 the uploaded artifact holding it).
+
+The reusable workflow passes all of these through as job outputs except
+`delta-json`, a path inside a runner that is gone by the time your next job
+starts — download the `delta-artifact` instead.
 
 ## Operational notes
 
@@ -111,15 +123,6 @@ the uploaded artifact holding it).
   rolling issues are named after the manifest it scans, so a monorepo can run
   one job per manifest without them overwriting each other. Two jobs pointed
   at the *same* manifest need distinct `monitor-id` values.
-- **Make sure someone is actually subscribed**: an alert nobody receives is
-  the same outcome as no alert. The rolling issues are opened by
-  `github-actions[bot]`, so you are notified only if you watch the repository
-  — and a label cannot help, because GitHub has no per-label subscription;
-  `issue-label` is for *filtering*. Either watch the repo (**All Activity**,
-  or **Custom → Issues**) or set `assignees`, which subscribes those users
-  when the issue is opened. Assignment happens at creation only, so someone
-  who unassigns themselves stays unassigned, and an existing issue is not
-  retro-assigned — close it, or assign by hand.
 - **Cron auto-disable**: GitHub disables scheduled workflows after 60 days
   without repo activity, and cron firing is best-effort. For a security
   monitor that failure mode is silent — set `heartbeat-url` to a
@@ -127,8 +130,7 @@ the uploaded artifact holding it).
   when the monitor *stops running*.
 - **Quota**: Community accounts are metered in monthly entitlement units.
   The action checks `rl-protect server list` after each scan and warns in
-  the job summary at ≥85% usage. Daily cadence is plenty; the database
-  doesn't update faster than that.
+  the job summary at ≥85% usage. A daily or twice-daily cadence is plenty.
 - **Ecosystems**: whatever rl-protect supports — npm, PyPI, RubyGems.
   Modern `yarn.lock` (Yarn 2+) is not supported by rl-protect.
 - **Monitor the lockfile, not the manifest** — otherwise you're monitoring
@@ -144,20 +146,8 @@ the uploaded artifact holding it).
   ungrouped delta is uploaded as a workflow artifact on every run — named by
   the `delta-artifact` output and kept for 90 days — which is what the
   comment's truncation notice points at.
-- **Resolutions refresh the issue quietly**: a run that only resolves
-  findings re-renders the issue body, so its "resolved" and "outstanding"
-  counters stay true, but posts no comment — a body edit doesn't notify, and
-  good news shouldn't page you. When a bucket's outstanding count reaches
-  zero the body says so; closing the issue is left to you.
-- **Stats live in the baseline**: the cumulative counters shown on the issue
-  body are stored in the baseline's `stats` block and only count alerts since
-  monitoring started — including "currently outstanding", so all four numbers
-  reconcile. The backlog absorbed on the first run is reported separately, as
-  "pre-existing backlog". Which findings have alerted is recorded as an
-  `alerted` flag on the finding records themselves, so the baseline carries
-  no duplicate copy of their keys. Deleting or regenerating the baseline
-  resets all of it. Baselines written before schema 2 are migrated on the
-  next run, at the cost of one extra baseline commit.
+- **A resolution never opens an issue**: with no open issue for its bucket, a
+  resolution-only run posts nothing — there is nothing to alert on.
 - **Two units, both labelled**: counters and headlines are package-level (one
   per package × finding, matching `delta.json` and the count outputs), while
   a table row is one *distinct* finding across every package carrying it.

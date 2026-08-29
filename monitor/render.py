@@ -1,9 +1,9 @@
-"""Render a Delta into Markdown: job summary, issue bodies, delta comments.
+"""Render a Delta into Markdown: the job summary and the delta comments.
 
 Real reports are large and highly repetitive: a single Go-based npm package
 ships ~20 per-platform variants that each carry the same stdlib CVEs, so 58
 distinct CVEs can expand to 1200+ findings. Rows are therefore grouped by
-finding (not by package), tables are capped, and issue bodies are clipped to
+finding (not by package), tables are capped, and comments are clipped to
 GitHub's hard body limit so the `gh issue create` call can never 422.
 """
 
@@ -16,7 +16,7 @@ from .normalize import Finding
 
 _STATUS_EMOJI = {"warn": "⚠️", "fail": "❌"}
 
-#: Max grouped rows per table. Issue bodies are tighter than job summaries.
+#: Max grouped rows per table. Issue comments are tighter than job summaries.
 MAX_ROWS_ISSUE = 40
 MAX_ROWS_SUMMARY = 100
 
@@ -75,15 +75,19 @@ def _packages_cell(purls: List[str]) -> str:
     return "<br>".join(shown)
 
 
-def _group_findings(findings: List[Finding]) -> List[Tuple[Finding, List[str]]]:
+def _group_findings(findings: List[Finding],
+                    with_status: bool = True) -> List[Tuple[Finding, List[str]]]:
     """Collapse findings that are the same issue seen on several packages.
 
     Grouped on everything a row displays except the package, so a row never
-    merges rows that would have read differently.
+    merges rows that would have read differently — and never splits rows
+    that read the same, which is why the status leaves the key when the
+    column is not rendered.
     """
     groups: Dict[Tuple, Tuple[Finding, List[str]]] = {}
     for f in findings:
-        key = (f.category, f.finding_id, f.status, f.count, f.title)
+        key = (f.category, f.finding_id, f.status if with_status else None,
+               f.count, f.title)
         if key in groups:
             groups[key][1].append(f.purl)
         else:
@@ -128,19 +132,29 @@ def _table(header: str, rows: List[str], total_groups: int, max_rows: int,
     return out
 
 
-def _finding_table(findings: List[Finding], max_rows: int = MAX_ROWS_SUMMARY) -> str:
-    header = (
-        "| Packages | Category | Finding | Status | CVSS | Details |\n"
-        "|---|---|---|---|---|---|"
-    )
-    groups = _group_findings(findings)
-    rows = [
-        f"| {_packages_cell(purls)} | {_cell(f.category)} | "
-        f"{_cell(f.finding_id)} | "
-        f"{_STATUS_EMOJI.get(f.status, '')} {_cell(f.status)} | "
-        f"{_fmt_score(f.score)} | {_cell(f.title)} |"
-        for f, purls in groups
-    ]
+def _finding_table(findings: List[Finding], max_rows: int = MAX_ROWS_SUMMARY,
+                   resolved: bool = False) -> str:
+    """One row per distinct finding.
+
+    A resolved finding has no status any more — the one it carried is the
+    reason it was reported, and a "❌ fail" beside a finding that just went
+    away reads as if it were still failing — so resolved tables drop the
+    column.
+    """
+    columns = ["Packages", "Category", "Finding"]
+    if not resolved:
+        columns.append("Status")
+    columns += ["CVSS", "Details"]
+    header = (f"| {' | '.join(columns)} |\n"
+              f"|{'---|' * len(columns)}")
+    groups = _group_findings(findings, with_status=not resolved)
+    rows = []
+    for f, purls in groups:
+        cells = [_packages_cell(purls), _cell(f.category), _cell(f.finding_id)]
+        if not resolved:
+            cells.append(f"{_STATUS_EMOJI.get(f.status, '')} {_cell(f.status)}")
+        cells += [_fmt_score(f.score), _cell(f.title)]
+        rows.append(f"| {' | '.join(cells)} |")
     return _table(header, rows, len(groups), max_rows, len(findings))
 
 
@@ -235,7 +249,8 @@ def render_summary(delta: Delta, manifest: str, first_run: bool = False) -> str:
         lines += ["## Worsened findings", "", _change_table(delta.changed_standard), ""]
 
     if delta.resolved:
-        lines += ["## Resolved since last scan", "", _finding_table(delta.resolved), ""]
+        lines += ["## Resolved since last scan", "",
+                  _finding_table(delta.resolved, resolved=True), ""]
 
     counts = delta.to_dict()["counts"]
     lines += [
@@ -260,112 +275,43 @@ def _delta_headline(new_count: int, changed_count: int,
     return " · ".join(parts) or "no changes"
 
 
-def render_issue_body(delta: Delta, manifest: str, critical: bool,
-                      run_url: Optional[str] = None,
-                      stats: Optional[Dict] = None,
-                      outstanding: Optional[int] = None,
-                      backlog: Optional[int] = None,
-                      date: str = "") -> str:
-    """Markdown body for the rolling GitHub issue (one per severity bucket).
-
-    The body is the issue's landing page: cumulative monitoring stats and a
-    pointer at the newest comment, which carries the latest delta. The delta
-    itself is deliberately not repeated here — the comment is its durable,
-    notifying copy.
-    """
-    new, changed = delta.alerts(critical)
-    if critical:
-        intro = (
-            "rl-protect flagged **malware or tampering** in a dependency that "
-            "was previously clean. Treat this as an incident: the affected "
-            "version may already be installed in dev machines and CI."
-        )
-    else:
-        intro = (
-            "rl-protect found new (non-malware) findings in previously "
-            "scanned dependencies."
-        )
-
-    lines = [intro, "", f"Manifest: `{manifest}`", ""]
-
-    if stats:
-        bucket = stats.get("critical" if critical else "standard") or {}
-        since = str(stats.get("since") or "")[:10]
-        lines += ["### Monitoring stats", ""]
-        if since:
-            lines.append(f"- **Monitoring since:** {since}")
-        lines += [
-            f"- **Runs with alerts:** {bucket.get('runs', 0)}",
-            f"- **Alerted so far:** {bucket.get('new', 0)} new · "
-            f"{bucket.get('changed', 0)} worsened",
-            f"- **Resolved since then:** {bucket.get('resolved', 0)}",
-        ]
-        if outstanding is not None:
-            lines.append(f"- **Currently outstanding:** {outstanding}")
-        # Every counter above covers alerts since monitoring started. The
-        # backlog is on a different footing — present before the baseline
-        # existed, never alerted on — so it gets its own line instead of
-        # inflating "outstanding" past what was ever reported.
-        if backlog:
-            lines.append(f"- **Pre-existing backlog:** {backlog} — present "
-                         "before monitoring started, never alerted on")
-        lines.append("")
-        if outstanding == 0:
-            lines += ["✅ Everything alerted in this bucket has since been "
-                      "resolved. The issue is left open for you to close.", ""]
-
-    resolved = delta.resolved_critical if critical else delta.resolved_standard
-    headline = _delta_headline(len(new), len(changed), len(resolved))
-    # The pointer only holds when this run posts a comment. A resolution-only
-    # run refreshes this body without commenting — nothing new to report, so
-    # nobody is paged — and must not point at a comment that is not coming.
-    pointer = (" — the full delta is in the newest comment below."
-               if (new or changed) else ".")
-    lines += [f"**Latest change{f' ({date})' if date else ''}:** "
-              f"{headline}{pointer}", ""]
-
-    if run_url:
-        lines += [f"[Workflow run]({run_url})", ""]
-    footer = ("_Maintained by the rl-protect-monitor action. This issue is not "
-              "duplicated: every delta — including earlier ones — is posted as "
-              "a comment below, and the body above tracks the cumulative "
-              "picture._")
-    lines += ["---", footer]
-    return _clip("\n".join(lines))
-
-
 def render_issue_comment(delta: Delta, critical: bool,
                          manifest: str = "",
                          run_url: Optional[str] = None,
                          date: str = "") -> str:
-    """Markdown for the delta comment on the rolling issue.
+    """Markdown for a delta comment on the rolling issue.
+
+    Doubles as the body the issue is created with: the body is written once,
+    at creation, carrying that run's delta, and is never edited afterwards —
+    every later delta, resolutions included, is a comment. The thread is an
+    append-only changelog whose newest entry is the newest comment.
 
     The headline stays visible when the comment is collapsed; the tables sit
     inside a <details> block so a long thread scans like a changelog. Most
     email clients ignore <details>, so the notification email still shows the
-    full delta expanded.
-
-    The comment is the surface that notifies — the body carrying the same
-    context is edited silently — so the manifest and, for malware, the
-    incident guidance live here too, outside the collapse. Without them the
-    alert email names neither what was scanned (one rolling issue can cover
-    several manifests) nor why the finding is urgent.
+    full delta expanded. The manifest lives in the headline because one
+    rolling issue can cover several manifests, and the alert email must name
+    which one this delta is about.
     """
     new, changed = delta.alerts(critical)
-    label = "🚨 Malware/tampering" if critical else "New findings"
+    resolved = (delta.resolved_critical if critical
+                else delta.resolved_standard)
+    label = "Malware/tampering" if critical else "Dependency findings"
+    if critical and (new or changed):
+        # The siren marks an active alert; a resolution-only delta is the
+        # opposite of one.
+        label = f"\U0001F6A8 {label}"
 
-    head = f"**{label}: {_delta_headline(len(new), len(changed))}**"
+    head = (f"**{label}: "
+            f"{_delta_headline(len(new), len(changed), len(resolved))}**")
     if manifest:
-        head += f" · `{manifest}`"
+        head += f" \u00b7 `{manifest}`"
     if date:
-        head += f" — {date}"
+        head += f" \u2014 {date}"
     if run_url:
-        head += f" · [workflow run]({run_url})"
+        head += f" \u00b7 [workflow run]({run_url})"
 
     lines = [head, ""]
-    if critical:
-        lines += ["Treat this as an incident: the affected version may "
-                  "already be installed in dev machines and CI.", ""]
     lines += ["<details>", "<summary>Show the full delta</summary>", ""]
     if new:
         lines += ["### New findings", "",
@@ -373,6 +319,9 @@ def render_issue_comment(delta: Delta, critical: bool,
     if changed:
         lines += ["### Worsened findings", "",
                   _change_table(changed, MAX_ROWS_ISSUE), ""]
+    if resolved:
+        lines += ["### Resolved findings", "",
+                  _finding_table(resolved, MAX_ROWS_ISSUE, resolved=True), ""]
     lines += ["</details>"]
     return _clip("\n".join(lines))
 

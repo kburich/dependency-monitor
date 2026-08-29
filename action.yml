@@ -1,8 +1,7 @@
 name: Dependency malware & vulnerability monitor (rl-protect)
 description: >-
-  Periodically re-scan your dependency manifest with ReversingLabs rl-protect
-  and get notified (GitHub Issues) only when new malware, tampering, or
-  vulnerability findings appear — delta-only alerts against a committed baseline.
+  Periodically re-scans your dependencies for security issues with
+  ReversingLabs rl-protect and alerts you when something changes.
 author: Kresimir Buric
 branding:
   icon: shield
@@ -55,8 +54,7 @@ inputs:
     description: >-
       Commit and push the updated baseline (needs contents write). If false,
       you must persist the rewritten baseline yourself: against a stale
-      baseline every run repeats the same alerts and the issue's cumulative
-      stats reset to a single-run snapshot.
+      baseline every run repeats the same alerts.
     required: false
     default: "true"
   notify:
@@ -109,6 +107,9 @@ outputs:
   new-critical-count:
     description: Number of new/worsened malware or tampering findings
     value: ${{ steps.diff.outputs.new-critical-count }}
+  changed-count:
+    description: Number of worsened findings (status escalated or count grew)
+    value: ${{ steps.diff.outputs.changed-count }}
   resolved-count:
     description: Number of findings resolved since the baseline
     value: ${{ steps.diff.outputs.resolved-count }}
@@ -366,10 +367,10 @@ runs:
         ASSIGNEES: ${{ inputs.assignees }}
         MARKER_CRITICAL: ${{ steps.identity.outputs.marker-critical }}
         MARKER_STANDARD: ${{ steps.identity.outputs.marker-standard }}
-        CRITICAL_BODY: ${{ steps.diff.outputs.issue-critical-body }}
-        STANDARD_BODY: ${{ steps.diff.outputs.issue-standard-body }}
         CRITICAL_COMMENT: ${{ steps.diff.outputs.issue-critical-comment }}
         STANDARD_COMMENT: ${{ steps.diff.outputs.issue-standard-comment }}
+        CRITICAL_ALERTS: ${{ steps.diff.outputs.issue-critical-alerts }}
+        STANDARD_ALERTS: ${{ steps.diff.outputs.issue-standard-alerts }}
       run: |
         OUT="$RUNNER_TEMP/rl-protect-monitor-out"
         # Comma-separated in, repeated flags out. Blank entries are dropped so
@@ -382,34 +383,37 @@ runs:
             ASSIGN+=(--assignee "$_u")
           fi
         done
-        # An empty comment path means this bucket only resolved findings:
-        # refresh its stats body, but post nothing and open nothing.
+        # An empty comment path means the bucket had no delta at all. A
+        # non-empty one whose alerts flag is false is a resolution-only
+        # delta: it is commented onto the bucket's open issue, but must
+        # never open one — that would announce the fix of something that
+        # was never reported.
         notify_bucket() {
-          local title="$1" body="$2" comment="$3"
+          local title="$1" comment="$2" alerts="$3"
           shift 3
-          local mode=(--comment-file "$comment")
-          if [[ -z "$comment" ]]; then
-            mode=(--body-only)
+          local extra=()
+          if [[ "$alerts" != "true" ]]; then
+            extra+=(--no-create)
           fi
           python -m monitor.gh_issue \
             --repo "$GITHUB_REPOSITORY" \
             --title-file "$title" \
-            --body-file "$body" \
-            "${mode[@]}" ${ASSIGN[@]+"${ASSIGN[@]}"} "$@"
+            --comment-file "$comment" \
+            ${extra[@]+"${extra[@]}"} ${ASSIGN[@]+"${ASSIGN[@]}"} "$@"
         }
         # The first label is the marker: it names both the bucket and the
         # monitor, so the two lookups can never resolve to each other's thread
         # or to another manifest's. The bare labels that follow are for humans
         # to filter and subscribe on, and carry no meaning for the lookup.
-        if [[ -n "$CRITICAL_BODY" ]]; then
-          notify_bucket "$OUT/issue_critical.title" "$CRITICAL_BODY" \
-            "$CRITICAL_COMMENT" \
+        if [[ -n "$CRITICAL_COMMENT" ]]; then
+          notify_bucket "$OUT/issue_critical.title" "$CRITICAL_COMMENT" \
+            "$CRITICAL_ALERTS" \
             --label "$MARKER_CRITICAL" \
             --label "rl-protect-malware" --label "$ISSUE_LABEL"
         fi
-        if [[ -n "$STANDARD_BODY" ]]; then
-          notify_bucket "$OUT/issue_standard.title" "$STANDARD_BODY" \
-            "$STANDARD_COMMENT" \
+        if [[ -n "$STANDARD_COMMENT" ]]; then
+          notify_bucket "$OUT/issue_standard.title" "$STANDARD_COMMENT" \
+            "$STANDARD_ALERTS" \
             --label "$MARKER_STANDARD" --label "$ISSUE_LABEL"
         fi
 

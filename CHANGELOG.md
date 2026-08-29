@@ -10,8 +10,62 @@ behaviour to stay frozen.
 
 ## [Unreleased]
 
+The rolling issues become append-only alert logs. The issue body is written
+once, at creation, and carries that run's delta — the same rendering every
+comment uses — so the very first notification email already contains the
+findings. Nothing is edited afterwards: the cumulative-stats landing page,
+the "latest change" pointer, and the title refresh are gone, and every later
+delta — resolutions now included — arrives as a comment. The monitor alerts;
+it does not track. Remediation state belongs in a work tracker, and the
+committed baseline already *is* the current full state.
+
+**Upgrading:** rolling issues opened by earlier versions are reused as-is —
+new deltas continue as comments — but their stats bodies freeze at the last
+pre-upgrade edit. Close them if the stale body bothers you; the next alert
+opens a fresh issue in the new shape. The baseline migrates itself (schema 3
+drops the `stats` block and the per-record `alerted` flags) in one extra
+baseline commit, and resolutions now notify subscribers where they used to
+be silent.
+
+### Changed
+
+- Each run's delta is the only thing ever written to the rolling issue: as
+  its body when it has to be opened, as a comment otherwise. The
+  comment-first/edit-second ordering, the `--body-only` refresh mode and the
+  stats renderer are gone with the body edits; the notifier makes exactly
+  one write per bucket per run.
+- Resolutions are posted as comments — and therefore notify. A run that
+  only resolves findings used to refresh the issue body silently; now the
+  stand-down lands in the thread, keeping it a complete changelog. It still
+  never *opens* an issue: a resolution of something never reported stays
+  unreported.
+- Malware comments drop the "treat this as an incident" sentence — the 🚨
+  title and headline already carry the urgency — and a resolution-only
+  malware comment drops the siren too. The standard bucket's headline label
+  is now "Dependency findings" (was "New findings"), since a delta can now
+  be resolutions alone.
+- Resolved-findings tables, in the comment and the job summary alike, drop
+  the Status column: a "❌ fail" beside a finding that has just gone away
+  read as if it were still failing.
+
+### Removed
+
+- The cumulative monitoring stats: monitoring-since, runs-with-alerts,
+  alerted-so-far, currently-outstanding and the pre-existing-backlog line,
+  along with everything that fed them. Baseline schema 3 drops the `stats`
+  block and the per-record `alerted` flags; older baselines are read as-is
+  and shed both in a single migration rewrite.
+
 ### Added
 
+- A `changed-count` output, the number of worsened findings. The diff engine
+  always computed it, but `action.yml` never surfaced it, so a consumer
+  could learn that something worsened (`has-alerts` without `new-count`) but
+  not how much.
+- The reusable workflow now exposes the action's outputs as its own —
+  everything but `delta-json`, a runner-local path that does not survive the
+  job. Until now only the direct-action form could build on them, and the
+  README suggested doing so without saying which form it meant.
 - An `assignees` input: comma-separated usernames assigned when a rolling
   issue is opened, which subscribes them to the thread. Until now the action
   had no way to reach anyone who was not already watching the repository —
