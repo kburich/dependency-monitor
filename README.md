@@ -6,10 +6,8 @@ alerts you when something changes.
 
 ## Why a monitor?
 
-`rl-protect scan` is a lookup against the Spectra Assure Community database,
-not a local analysis. Your lockfile doesn't change, but the verdict on a
-pinned package can: a dependency that passed yesterday may be flagged as
-malware tomorrow when the database is updated (as happened with
+Your project manifest may not change, but the verdict on a package can: one
+that passed yesterday may be flagged as malware tomorrow (as happened with
 `ua-parser-js`, `event-stream`, and many others). A one-shot scan in CI
 catches bad packages *entering* your project; this monitor catches packages
 that *go bad after* they're already in.
