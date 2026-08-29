@@ -49,6 +49,30 @@ on:
       heartbeat-url:
         # Treated as a secret: healthchecks-style ping URLs embed a token.
         required: false
+    # The action's outputs, passed through so a caller can build on them
+    # (a Slack step on `has-critical-alerts`, say) without switching to the
+    # direct-action form. `delta-json` is not among them: it is a path inside
+    # this job's runner, gone by the time the caller's next job starts — the
+    # `delta-artifact` output names the uploaded copy instead.
+    outputs:
+      new-count:
+        value: ${{ jobs.monitor.outputs.new-count }}
+      new-critical-count:
+        value: ${{ jobs.monitor.outputs.new-critical-count }}
+      changed-count:
+        value: ${{ jobs.monitor.outputs.changed-count }}
+      resolved-count:
+        value: ${{ jobs.monitor.outputs.resolved-count }}
+      has-alerts:
+        value: ${{ jobs.monitor.outputs.has-alerts }}
+      has-critical-alerts:
+        value: ${{ jobs.monitor.outputs.has-critical-alerts }}
+      has-updates:
+        value: ${{ jobs.monitor.outputs.has-updates }}
+      first-run:
+        value: ${{ jobs.monitor.outputs.first-run }}
+      delta-artifact:
+        value: ${{ jobs.monitor.outputs.delta-artifact }}
 
 jobs:
   monitor:
@@ -59,10 +83,21 @@ jobs:
     concurrency:
       group: rl-protect-monitor-${{ github.repository }}-${{ github.ref }}
       cancel-in-progress: false
+    outputs:
+      new-count: ${{ steps.rl.outputs.new-count }}
+      new-critical-count: ${{ steps.rl.outputs.new-critical-count }}
+      changed-count: ${{ steps.rl.outputs.changed-count }}
+      resolved-count: ${{ steps.rl.outputs.resolved-count }}
+      has-alerts: ${{ steps.rl.outputs.has-alerts }}
+      has-critical-alerts: ${{ steps.rl.outputs.has-critical-alerts }}
+      has-updates: ${{ steps.rl.outputs.has-updates }}
+      first-run: ${{ steps.rl.outputs.first-run }}
+      delta-artifact: ${{ steps.rl.outputs.delta-artifact }}
     steps:
       - uses: actions/checkout@v7
 
-      - uses: kburich/rl-protect-monitor@v2
+      - id: rl
+        uses: kburich/rl-protect-monitor@v2
         with:
           rl-token: ${{ secrets.rl-token }}
           manifest-path: ${{ inputs.manifest-path }}

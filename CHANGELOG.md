@@ -58,6 +58,14 @@ be silent.
 
 ### Added
 
+- A `changed-count` output, the number of worsened findings. The diff engine
+  always computed it, but `action.yml` never surfaced it, so a consumer
+  could learn that something worsened (`has-alerts` without `new-count`) but
+  not how much.
+- The reusable workflow now exposes the action's outputs as its own —
+  everything but `delta-json`, a runner-local path that does not survive the
+  job. Until now only the direct-action form could build on them, and the
+  README suggested doing so without saying which form it meant.
 - An `assignees` input: comma-separated usernames assigned when a rolling
   issue is opened, which subscribes them to the thread. Until now the action
   had no way to reach anyone who was not already watching the repository —

@@ -102,10 +102,15 @@ and leaves the outputs and `delta-artifact` to drive your channel.
 
 ## Outputs
 
-`new-count`, `new-critical-count`, `resolved-count`, `has-alerts`,
+`new-count`, `changed-count` (worsened), `new-critical-count` (new *or*
+worsened malware/tampering), `resolved-count`, `has-alerts`,
 `has-critical-alerts`, `has-updates` (alerts *or* resolutions), `first-run`,
 `delta-json` (path to the machine-readable delta), `delta-artifact` (name of
 the uploaded artifact holding it).
+
+The reusable workflow passes all of these through as job outputs except
+`delta-json`, a path inside a runner that is gone by the time your next job
+starts — download the `delta-artifact` instead.
 
 ## Operational notes
 

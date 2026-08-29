@@ -107,6 +107,9 @@ outputs:
   new-critical-count:
     description: Number of new/worsened malware or tampering findings
     value: ${{ steps.diff.outputs.new-critical-count }}
+  changed-count:
+    description: Number of worsened findings (status escalated or count grew)
+    value: ${{ steps.diff.outputs.changed-count }}
   resolved-count:
     description: Number of findings resolved since the baseline
     value: ${{ steps.diff.outputs.resolved-count }}
