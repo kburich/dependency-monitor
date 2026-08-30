@@ -20,10 +20,6 @@ you hear about changes only, malware is split into its own `🚨` issue you
 can page on, and the baseline history shows exactly when a package went
 bad.
 
-It complements those scanners rather than replacing them — it opens no
-upgrade PRs, runs on a schedule rather than in real time, and needs a
-Spectra Assure token. Run both.
-
 ## Quick start
 
 1. Create a free [Spectra Assure Community](https://secure.software/) account
