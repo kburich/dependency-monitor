@@ -4,24 +4,25 @@ GitHub Action that periodically re-scans your dependencies for security
 issues with [ReversingLabs rl-protect](https://docs.secure.software/) and
 alerts you when something changes.
 
-## Why a monitor?
+## Why rl-protect-monitor?
 
-Your project manifest may not change, but the verdict on a dependency can:
-one that passed yesterday may be flagged as malware tomorrow (as happened
-with `ua-parser-js`, `event-stream`, and many others). A one-shot scan in CI
-catches bad packages *entering* your project; this monitor catches packages
-that *go bad after* they're already in.
+Advisory-based dependency scanners can only tell you about a package once
+someone has reported it. rl-protect reports the same known vulnerabilities,
+and on top of them ReversingLabs' own analysis of every package as it lands
+in npm, PyPI and the other registries: install scripts, obfuscation, network
+calls, tampering, leaked secrets. That covers packages nobody has filed an
+advisory for, and categories advisories don't have.
 
-The core is a **delta engine**: each run is diffed against a baseline the
-action commits for you, and you're only notified about changes — never
-re-spammed about known findings. The baseline's git history doubles as an
-audit trail of exactly when a package went bad. It lives on its own orphan
-branch (`rl-protect-baseline/<monitor>`), so your default branch's history
-stays clean and its protection rules stay untouched.
+The monitor makes that a standing check rather than a one-off: a package
+that passed yesterday may be flagged tomorrow, as `ua-parser-js` and
+`event-stream` were. Each scheduled re-scan is diffed against a baseline so
+you hear about changes only, malware is split into its own `🚨` issue you
+can page on, and the baseline history shows exactly when a package went
+bad.
 
-The monitor runs on your **default branch** — GitHub fires scheduled
-workflows nowhere else, and periodic re-scanning is the whole point. Runs
-triggered on another branch are rejected with an error.
+It complements those scanners rather than replacing them — it opens no
+upgrade PRs, runs on a schedule rather than in real time, and needs a
+Spectra Assure token. Run both.
 
 ## Quick start
 
@@ -112,6 +113,9 @@ starts — download the `delta-artifact` instead.
 
 ## Operational notes
 
+- **Default branch only**: GitHub fires scheduled workflows nowhere else,
+  and periodic re-scanning is the whole point, so runs triggered on
+  another branch are rejected with an error.
 - **Protected branches**: nothing to do — the default `baseline-branch: auto`
   keeps the baseline on an orphan branch your default branch's protection
   doesn't cover, and never touches the scanned branch. Only if you set
