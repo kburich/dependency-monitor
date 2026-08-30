@@ -8,10 +8,10 @@ alerts you when something changes.
 
 Advisory-based dependency scanners can only tell you about a package once
 someone has reported it. rl-protect reports the same known vulnerabilities,
-and on top of them ReversingLabs' own analysis of every package as it lands
-in npm, PyPI and the other registries: install scripts, obfuscation, network
-calls, tampering, leaked secrets. That covers packages nobody has filed an
-advisory for, and categories advisories don't have.
+and on top of them ReversingLabs' own analysis of every package: install
+scripts, obfuscation, network calls, tampering, leaked secrets... That covers
+packages nobody has filed an advisory for, and categories advisories don't
+have.
 
 The monitor makes that a standing check rather than a one-off: a package
 that passed yesterday may be flagged tomorrow, as `ua-parser-js` and
@@ -19,10 +19,6 @@ that passed yesterday may be flagged tomorrow, as `ua-parser-js` and
 you hear about changes only, malware is split into its own `🚨` issue you
 can page on, and the baseline history shows exactly when a package went
 bad.
-
-It complements those scanners rather than replacing them — it opens no
-upgrade PRs, runs on a schedule rather than in real time, and needs a
-Spectra Assure token. Run both.
 
 ## Quick start
 
