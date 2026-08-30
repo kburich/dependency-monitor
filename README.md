@@ -1,10 +1,10 @@
-# rl-protect-monitor
+# dependency-monitor
 
 GitHub Action that periodically re-scans your dependencies for security
 issues with [ReversingLabs rl-protect](https://docs.secure.software/) and
 alerts you when something changes.
 
-## Why rl-protect-monitor?
+## Why dependency-monitor?
 
 Advisory-based dependency scanners can only tell you about a package once
 someone has reported it. rl-protect reports the same known vulnerabilities,
@@ -29,7 +29,7 @@ Spectra Assure token. Run both.
 1. Create a free [Spectra Assure Community](https://secure.software/) account
    and generate a token (starts with `rlcmm`).
 2. Add it to your repo as the `RL_TOKEN` secret.
-3. Add `.github/workflows/rl-protect-monitor.yml`:
+3. Add `.github/workflows/dependency-monitor.yml`:
 
 ```yaml
 name: Dependency monitor
@@ -39,7 +39,7 @@ on:
   workflow_dispatch: {}
 jobs:
   monitor:
-    uses: kburich/rl-protect-monitor/.github/workflows/monitor.yml@v3
+    uses: kburich/dependency-monitor/.github/workflows/monitor.yml@v4
     permissions:
       contents: write   # commit the baseline back
       issues: write     # open/update notification issues
@@ -50,10 +50,10 @@ jobs:
 The first run scans your manifest, records the baseline (no alert), and
 commits it. Subsequent runs alert only on deltas:
 
-- **Malware / tampering** → a `🚨`-titled issue labeled `rl-protect-malware`
+- **Malware / tampering** → a `🚨`-titled issue labeled `dependency-malware`
   (treat as an incident — the package may already be installed).
 - **Vulnerabilities / secrets / licenses / hardening** → a separate,
-  quieter rolling issue labeled `rl-protect-monitor`.
+  quieter rolling issue labeled `dependency-monitor`.
 
 ## Alerting
 
@@ -72,7 +72,7 @@ opened; without it, only those watching the repository are notified.
 
 **Slack and everything else.** [GitHub's Slack app](https://github.com/integrations/slack)
 can subscribe a channel to the repo's issues filtered by label, so
-`rl-protect-malware` alone can page a channel. Or guard your own step with
+`dependency-malware` alone can page a channel. Or guard your own step with
 the action's [outputs](#outputs) — `has-critical-alerts`, `has-alerts` —
 and post anywhere; [examples/consumer-action.yml](examples/consumer-action.yml)
 shows a Slack webhook on malware. `notify: none` skips the issues entirely
@@ -88,10 +88,10 @@ and leaves the outputs and `delta-artifact` to drive your channel.
 | `check-deps` | `release,develop,transitive` | Passed to `rl-protect scan --check-deps` |
 | `baseline-path` | `.rl-protect/baseline.json` | Path the baseline is stored at, within whichever branch holds it |
 | `monitor-id` | `auto` | Names this monitor's baseline branch and rolling issues; derived from the manifest so two monitors in one repo stay apart. Set it to separate two monitors on the same manifest |
-| `baseline-branch` | `auto` | `auto` → `rl-protect-baseline/<monitor-id>`, an orphan branch your default branch's protection doesn't cover. A name uses that branch; empty commits the baseline to the default branch, where it shows up in PR diffs but needs direct pushes to be allowed |
+| `baseline-branch` | `auto` | `auto` → `dependency-baseline/<monitor-id>`, an orphan branch your default branch's protection doesn't cover. A name uses that branch; empty commits the baseline to the default branch, where it shows up in PR diffs but needs direct pushes to be allowed |
 | `commit-baseline` | `true` | Commit + push the updated baseline. If `false`, persist the rewritten baseline yourself — against a stale baseline every run repeats the same alerts |
 | `notify` | `issue` | `issue` / `none` (job summary is always written) |
-| `issue-label` | `rl-protect-monitor` | Extra label on both rolling issues, for filtering. It doesn't identify them — the per-monitor marker label does |
+| `issue-label` | `dependency-monitor` | Extra label on both rolling issues, for filtering. It doesn't identify them — the per-monitor marker label does |
 | `assignees` | — | Comma-separated usernames assigned when a rolling issue is opened, which subscribes them. Without it, only repo watchers are notified |
 | `alert-on-first-run` | `false` | Alert on all findings when no baseline exists |
 | `fail-on` | `never` | `never` / `critical` / `any-new`. A monitor should not gate — evaluated *after* notifications and baseline commit |

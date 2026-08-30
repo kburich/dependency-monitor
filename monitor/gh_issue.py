@@ -1,10 +1,10 @@
 """Create or comment on the rolling notification issue via the `gh` CLI.
 
 One open issue per severity bucket, identified by its first (marker) label.
-Markers are per monitor and per bucket — `rl-protect-monitor/<id>` and
-`rl-protect-malware/<id>`, derived in `monitor.identity` — so a lookup can
+Markers are per monitor and per bucket — `dependency-monitor/<id>` and
+`dependency-malware/<id>`, derived in `monitor.identity` — so a lookup can
 never resolve to the other bucket's thread or to another monitor's. The
-issue carries the bare `rl-protect-monitor` / `rl-protect-malware` labels
+issue carries the bare `dependency-monitor` / `dependency-malware` labels
 too, but only for humans to filter on.
 
 The issue is append-only. Its body is written once, at creation, and carries
@@ -29,8 +29,8 @@ Usage:
         --repo owner/name \
         --title-file out/issue_critical.title \
         --comment-file out/issue_critical_comment.md \
-        --label rl-protect-malware/package-lock.json \
-        --label rl-protect-malware --label rl-protect-monitor
+        --label dependency-malware/package-lock.json \
+        --label dependency-malware --label dependency-monitor
 
 Requires GH_TOKEN in the environment with `issues: write`.
 """
@@ -88,7 +88,7 @@ def _ensure_labels(repo: str, labels: List[str]) -> None:
         subprocess.run(
             ["gh", "label", "create", label, "--repo", repo,
              "--color", "D93F0B",
-             "--description", "Managed by rl-protect-monitor"],
+             "--description", "Managed by dependency-monitor"],
             check=False, capture_output=True, text=True,
         )
 
@@ -141,7 +141,7 @@ def _assign(repo: str, number: str, assignees: List[str]) -> None:
 
 
 def run(argv: Optional[List[str]] = None) -> int:
-    parser = argparse.ArgumentParser(prog="rl-protect-monitor-notify")
+    parser = argparse.ArgumentParser(prog="dependency-monitor-notify")
     parser.add_argument("--repo", required=True)
     parser.add_argument("--title-file", required=True, type=_nonempty_path,
                         help="Title used if the issue has to be created; an "

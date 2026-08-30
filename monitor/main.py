@@ -165,14 +165,14 @@ def _github_step_summary(markdown: str) -> None:
 
 
 def run(argv: Optional[List[str]] = None) -> int:
-    parser = argparse.ArgumentParser(prog="rl-protect-monitor")
+    parser = argparse.ArgumentParser(prog="dependency-monitor")
     parser.add_argument("--report", required=True, type=Path,
                         help="Path to the rl-protect scan report JSON")
     parser.add_argument("--baseline", required=True, type=Path,
                         help="Path to the baseline JSON (created if missing)")
     parser.add_argument("--manifest", default="",
                         help="Manifest path, for display in summaries/issues")
-    parser.add_argument("--out-dir", type=Path, default=Path("rl-protect-monitor-out"),
+    parser.add_argument("--out-dir", type=Path, default=Path("dependency-monitor-out"),
                         help="Directory for delta.json / markdown outputs")
     parser.add_argument("--alert-on-first-run", action="store_true",
                         help="Treat all findings as new when no baseline exists")

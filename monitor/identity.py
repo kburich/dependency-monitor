@@ -39,13 +39,13 @@ import sys
 from typing import List, Optional
 
 #: Prefix of the orphan branch each monitor stores its baseline on.
-BASELINE_BRANCH_PREFIX = "rl-protect-baseline"
+BASELINE_BRANCH_PREFIX = "dependency-baseline"
 
 #: Marker-label prefixes. The marker identifies a bucket's rolling issue; the
 #: two are disjoint by construction, which is what lets the issue lookup be a
 #: plain "newest issue carrying this label" with no exclusion rules.
-MARKER_STANDARD_PREFIX = "rl-protect-monitor"
-MARKER_CRITICAL_PREFIX = "rl-protect-malware"
+MARKER_STANDARD_PREFIX = "dependency-monitor"
+MARKER_CRITICAL_PREFIX = "dependency-malware"
 
 #: A GitHub label name is capped at 50 characters and the longest prefix above
 #: is 19 including its slash, so an id longer than this cannot be expressed as
@@ -140,7 +140,7 @@ def resolve_baseline_branch(value: str, identity: str) -> str:
 
 
 def run(argv: Optional[List[str]] = None) -> int:
-    parser = argparse.ArgumentParser(prog="rl-protect-monitor-identity")
+    parser = argparse.ArgumentParser(prog="dependency-monitor-identity")
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--monitor-id", default=AUTO,
                         help=f"'{AUTO}' derives the id from the manifest")

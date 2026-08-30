@@ -33,7 +33,7 @@ for version in "${versions[@]}"; do
   # array as unbound under `set -u`.
   if ! docker run --rm --network host \
     -v "$PWD:/src:ro" -w /src \
-    -v rl-protect-monitor-pip:/root/.cache/pip \
+    -v dependency-monitor-pip:/root/.cache/pip \
     -e PYTHONDONTWRITEBYTECODE=1 \
     -e PIP_DISABLE_PIP_VERSION_CHECK=1 \
     "python:${version}-slim" \

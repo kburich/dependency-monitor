@@ -84,7 +84,7 @@ def outputs(tmp_path):
     return tmp_path
 
 
-def notify(monkeypatch, fake, outputs, labels=("rl-protect-monitor",),
+def notify(monkeypatch, fake, outputs, labels=("dependency-monitor",),
            no_create=False, rc=0, assignees=()):
     monkeypatch.setattr(gh_issue.subprocess, "run", fake)
     argv = ["--repo", "owner/name",
@@ -104,9 +104,9 @@ class TestLabelCreation:
     def test_every_label_is_created_before_the_issue(self, monkeypatch,
                                                      outputs):
         fake = notify(monkeypatch, FakeGh(open_number=None), outputs,
-                      labels=("rl-protect-malware", "rl-protect-monitor"))
-        assert [c[3] for c in label_creates(fake)] == ["rl-protect-malware",
-                                                       "rl-protect-monitor"]
+                      labels=("dependency-malware", "dependency-monitor"))
+        assert [c[3] for c in label_creates(fake)] == ["dependency-malware",
+                                                       "dependency-monitor"]
 
     def test_an_existing_label_is_not_overwritten(self, monkeypatch, outputs):
         """`--force` makes this an upsert, which resets a maintainer's own
@@ -145,7 +145,7 @@ class TestExistingIssue:
         with pytest.raises(SystemExit):
             gh_issue.run(["--repo", "owner/name",
                           "--title-file", str(outputs / "issue.title"),
-                          "--label", "rl-protect-monitor"])
+                          "--label", "dependency-monitor"])
         assert fake.issue_calls() == []
 
     def test_empty_comment_file_is_rejected_before_any_gh_call(self,
@@ -158,7 +158,7 @@ class TestExistingIssue:
             gh_issue.run(["--repo", "owner/name",
                           "--title-file", str(outputs / "issue.title"),
                           "--comment-file", "",
-                          "--label", "rl-protect-monitor"])
+                          "--label", "dependency-monitor"])
         assert fake.calls == []
 
 
@@ -176,17 +176,17 @@ class TestNoOpenIssue:
 
     def test_create_carries_every_label(self, monkeypatch, outputs):
         fake = notify(monkeypatch, FakeGh(open_number=None), outputs,
-                      labels=("rl-protect-monitor", "rl-protect-malware"))
+                      labels=("dependency-monitor", "dependency-malware"))
         create = fake.call("create")
         labels = [create[i + 1] for i, arg in enumerate(create) if arg == "--label"]
-        assert labels == ["rl-protect-monitor", "rl-protect-malware"]
+        assert labels == ["dependency-monitor", "dependency-malware"]
 
     def test_rolling_issue_is_looked_up_by_the_first_label(self, monkeypatch,
                                                            outputs):
         """The first label is the marker; the rest are decoration."""
         fake = notify(monkeypatch, FakeGh(open_number=None), outputs,
-                      labels=("rl-protect-monitor", "rl-protect-malware"))
-        assert flag(fake.call("list"), "--label") == "rl-protect-monitor"
+                      labels=("dependency-monitor", "dependency-malware"))
+        assert flag(fake.call("list"), "--label") == "dependency-monitor"
 
     def test_created_issue_url_is_echoed_to_the_log(self, monkeypatch, outputs,
                                                     capsys):
@@ -211,7 +211,7 @@ class TestNoOpenIssue:
             gh_issue.run(["--repo", "owner/name",
                           "--title-file", str(outputs / "issue.title"),
                           "--comment-file", str(outputs / "issue_comment.md"),
-                          "--label", "rl-protect-monitor"])
+                          "--label", "dependency-monitor"])
         assert "Issues are disabled" in capsys.readouterr().err
 
 
@@ -244,21 +244,21 @@ class TestNoCreate:
 #: How the two buckets of one monitor are labelled: a marker naming bucket and
 #: monitor, plus bare classification labels that are only there for humans to
 #: filter on. `pkg` stands in for the monitor id.
-CRITICAL_LABELS = ("rl-protect-malware/pkg", "rl-protect-malware",
-                   "rl-protect-monitor")
-STANDARD_LABELS = ("rl-protect-monitor/pkg", "rl-protect-monitor")
+CRITICAL_LABELS = ("dependency-malware/pkg", "dependency-malware",
+                   "dependency-monitor")
+STANDARD_LABELS = ("dependency-monitor/pkg", "dependency-monitor")
 
 MALWARE_ISSUE = (2, list(CRITICAL_LABELS))
 STANDARD_ISSUE = (1, list(STANDARD_LABELS))
 #: Another monitor in the same repo, scanning a second manifest.
-OTHER_MALWARE_ISSUE = (3, ["rl-protect-malware/req", "rl-protect-malware",
-                           "rl-protect-monitor"])
+OTHER_MALWARE_ISSUE = (3, ["dependency-malware/req", "dependency-malware",
+                           "dependency-monitor"])
 
 
 class TestBucketIsolation:
     """Markers name bucket *and* monitor, so every lookup is unambiguous.
 
-    Both issues carry the bare `rl-protect-monitor` label, so a lookup by
+    Both issues carry the bare `dependency-monitor` label, so a lookup by
     that alone could land the standard bucket's delta on the malware
     incident's thread. The marker is what keeps them apart, with no
     exclusion rules involved.
@@ -308,7 +308,7 @@ class TestLookup:
         fake = notify(monkeypatch, FakeGh(open_number=1), outputs,
                       labels=STANDARD_LABELS)
         listing = fake.call("list")
-        assert flag(listing, "--label") == "rl-protect-monitor/pkg"
+        assert flag(listing, "--label") == "dependency-monitor/pkg"
         assert listing.count("--label") == 1
 
     def test_one_row_is_enough(self, monkeypatch, outputs):

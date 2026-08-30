@@ -22,13 +22,13 @@ jobs:
     # baseline. The group matches the reusable workflow's, so switching
     # between the two does not leave both running at once.
     concurrency:
-      group: rl-protect-monitor-${{ github.repository }}-${{ github.ref }}
+      group: dependency-monitor-${{ github.repository }}-${{ github.ref }}
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
 
       - id: rl
-        uses: kburich/rl-protect-monitor@v3
+        uses: kburich/dependency-monitor@v4
         with:
           rl-token: ${{ secrets.RL_TOKEN }}
           # manifest-path: package-lock.json   # omit to auto-detect
@@ -46,6 +46,6 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           jq -n --arg repo "$REPO" \
-            '{text: "🚨 rl-protect flagged malware in \($repo) — see the rl-protect-malware issue."}' \
+            '{text: "🚨 rl-protect flagged malware in \($repo) — see the dependency-malware issue."}' \
             | curl -fsS -X POST -H 'Content-Type: application/json' \
                 --data-binary @- "$SLACK_WEBHOOK_URL"

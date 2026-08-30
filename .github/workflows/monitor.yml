@@ -1,7 +1,7 @@
 # Reusable workflow — call this from your repo with `workflow_call`.
 # See examples/consumer-reusable.yml for the consumer stanza.
 
-name: rl-protect monitor
+name: Dependency monitor
 
 on:
   workflow_call:
@@ -32,7 +32,7 @@ on:
         default: issue
       issue-label:
         type: string
-        default: rl-protect-monitor
+        default: dependency-monitor
       assignees:
         # Comma-separated. Without one, an alert reaches only repo watchers.
         type: string
@@ -81,7 +81,7 @@ jobs:
       contents: write   # baseline commit-back
       issues: write     # rolling notification issues
     concurrency:
-      group: rl-protect-monitor-${{ github.repository }}-${{ github.ref }}
+      group: dependency-monitor-${{ github.repository }}-${{ github.ref }}
       cancel-in-progress: false
     outputs:
       new-count: ${{ steps.rl.outputs.new-count }}
@@ -97,7 +97,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - id: rl
-        uses: kburich/rl-protect-monitor@v3
+        uses: kburich/dependency-monitor@v4
         with:
           rl-token: ${{ secrets.rl-token }}
           manifest-path: ${{ inputs.manifest-path }}

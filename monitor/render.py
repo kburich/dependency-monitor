@@ -223,7 +223,7 @@ def render_summary(delta: Delta, manifest: str, first_run: bool = False) -> str:
     action.yml, after this summary has been written, and that step appends
     its own line to $GITHUB_STEP_SUMMARY.
     """
-    lines = ["# rl-protect monitor", "", f"Manifest: `{manifest}`", ""]
+    lines = ["# Dependency monitor", "", f"Manifest: `{manifest}`", ""]
 
     if first_run:
         lines += [
