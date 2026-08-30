@@ -4,9 +4,47 @@ All notable changes to this action are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Consumers pin the floating major tag (`@v3`), which always points at the
-newest release in the `3.x` line. Pin an exact tag (`@v3.0.0`) if you need
+Consumers pin the floating major tag (`@v4`), which always points at the
+newest release in the `4.x` line. Pin an exact tag (`@v4.0.0`) if you need
 behaviour to stay frozen.
+
+## [4.0.0] - 2026-08-30
+
+The repository is renamed from `rl-protect-monitor` to `dependency-monitor`,
+and every identifier that carried the old name follows it: the marker labels
+are now `dependency-monitor/<id>` and `dependency-malware/<id>`, the bare
+filter labels `dependency-monitor` and `dependency-malware`, the orphan
+baseline branch `dependency-baseline/<monitor-id>`, and baseline commits are
+authored by `dependency-monitor[bot]`. The scanner keeps its name: `rl-protect`
+still means the ReversingLabs CLI wherever it appears — the `rl-token` input,
+the `.rl-protect/baseline.json` default path, the report schema.
+
+**Upgrading:** GitHub redirects the old repository URL, so an existing
+`uses: kburich/rl-protect-monitor@v3` keeps resolving, but `@v4` exists only
+under the new name — update the `uses:` line when you bump. The marker label
+is what identifies a monitor's rolling issues, so the first `@v4` run finds
+none carrying the new label and opens fresh ones; close the old
+`rl-protect-monitor/<id>` and `rl-protect-malware/<id>` issues yourself. The
+baseline moves the same way: with `baseline-branch: auto` the first run finds
+no `dependency-baseline/<monitor-id>` branch and records a new baseline
+without alerting. Delete the old `rl-protect-baseline/<monitor-id>` branch,
+or name it in `baseline-branch` explicitly to keep its history. A baseline
+committed to the default branch (`baseline-branch: ""`) is unaffected.
+
+### Changed
+
+- Marker-label prefixes `rl-protect-monitor` / `rl-protect-malware` →
+  `dependency-monitor` / `dependency-malware`. The new prefix is the same
+  length, so the id-truncation threshold does not move.
+- Orphan baseline-branch prefix `rl-protect-baseline` → `dependency-baseline`.
+- `issue-label` default `rl-protect-monitor` → `dependency-monitor`.
+- Baseline commits are authored by `dependency-monitor[bot]`
+  (`dependency-monitor@users.noreply.github.com`). The commit subject keeps
+  its `chore(rl-protect)` scope: it describes the scanner's findings.
+- The job summary heading and the reusable workflow's display name read
+  "Dependency monitor".
+- CLI `prog` names and the default `--out-dir` (`dependency-monitor-out`)
+  follow the rename. The Marketplace listing name is unchanged.
 
 ## [3.0.0] - 2026-08-29
 
@@ -409,8 +447,9 @@ Initial release.
 - `alert-on-first-run` for repositories that want the initial backlog
   reported rather than absorbed into the baseline.
 
-[3.0.0]: https://github.com/kburich/rl-protect-monitor/compare/v2.0.0...v3.0.0
-[2.0.0]: https://github.com/kburich/rl-protect-monitor/compare/v1.2.0...v2.0.0
-[1.2.0]: https://github.com/kburich/rl-protect-monitor/compare/v1.1.0...v1.2.0
-[1.1.0]: https://github.com/kburich/rl-protect-monitor/compare/v1.0.0...v1.1.0
-[1.0.0]: https://github.com/kburich/rl-protect-monitor/releases/tag/v1.0.0
+[4.0.0]: https://github.com/kburich/dependency-monitor/compare/v3.0.0...v4.0.0
+[3.0.0]: https://github.com/kburich/dependency-monitor/compare/v2.0.0...v3.0.0
+[2.0.0]: https://github.com/kburich/dependency-monitor/compare/v1.2.0...v2.0.0
+[1.2.0]: https://github.com/kburich/dependency-monitor/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/kburich/dependency-monitor/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/kburich/dependency-monitor/releases/tag/v1.0.0

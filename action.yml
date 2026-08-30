@@ -43,7 +43,7 @@ inputs:
   baseline-branch:
     description: >-
       Dedicated branch to store the baseline on, created as an orphan branch
-      on first run. "auto" derives rl-protect-baseline/<monitor-id>, which
+      on first run. "auto" derives dependency-baseline/<monitor-id>, which
       keeps baseline commits out of the scanned branch's history and works
       unchanged when that branch is protected. A name uses that branch.
       Empty commits the baseline to the scanned branch itself, where it shows
@@ -68,7 +68,7 @@ inputs:
       from monitor-id — and it does not subscribe anyone: GitHub has no
       per-label notification. Use assignees for that.
     required: false
-    default: rl-protect-monitor
+    default: dependency-monitor
   assignees:
     description: >-
       Comma-separated usernames to assign when a rolling issue is opened,
@@ -181,7 +181,7 @@ runs:
             DRY_RUN=true
             echo "::notice::Manual run on '$SCANNED', which is not the default branch ('$DEFAULT') — dry run: the scan, job summary and delta artifact are produced, but no baseline is committed and nothing is posted."
           else
-            echo "::error::rl-protect-monitor runs on the default branch ('$DEFAULT') only; this run is on '$SCANNED'. Scheduled runs already fire on the default branch — add 'branches: [$DEFAULT]' to your push: trigger."
+            echo "::error::dependency-monitor runs on the default branch ('$DEFAULT') only; this run is on '$SCANNED'. Scheduled runs already fire on the default branch — add 'branches: [$DEFAULT]' to your push: trigger."
             exit 1
           fi
         fi
@@ -297,7 +297,7 @@ runs:
         fi
         # Baseline lives on a dedicated branch: fetch it (if it exists) into
         # a temp file so the scanned branch's working tree stays clean.
-        BFILE="$RUNNER_TEMP/rl-protect-baseline.json"
+        BFILE="$RUNNER_TEMP/dependency-baseline.json"
         if git fetch --quiet origin "$BASELINE_BRANCH" 2>/dev/null; then
           if git cat-file -e "FETCH_HEAD:$BASELINE_PATH" 2>/dev/null; then
             git show "FETCH_HEAD:$BASELINE_PATH" > "$BFILE"
@@ -328,7 +328,7 @@ runs:
           --report "$REPORT_PATH" \
           --baseline "$BASELINE_FILE" \
           --manifest "$MANIFEST" \
-          --out-dir "$RUNNER_TEMP/rl-protect-monitor-out" \
+          --out-dir "$RUNNER_TEMP/dependency-monitor-out" \
           "${EXTRA[@]}"
 
     # Uploaded before the notification, and unconditionally: the delta
@@ -372,7 +372,7 @@ runs:
         CRITICAL_ALERTS: ${{ steps.diff.outputs.issue-critical-alerts }}
         STANDARD_ALERTS: ${{ steps.diff.outputs.issue-standard-alerts }}
       run: |
-        OUT="$RUNNER_TEMP/rl-protect-monitor-out"
+        OUT="$RUNNER_TEMP/dependency-monitor-out"
         # Comma-separated in, repeated flags out. Blank entries are dropped so
         # a trailing comma or a stray space cannot become an empty --assignee.
         ASSIGN=()
@@ -409,7 +409,7 @@ runs:
           notify_bucket "$OUT/issue_critical.title" "$CRITICAL_COMMENT" \
             "$CRITICAL_ALERTS" \
             --label "$MARKER_CRITICAL" \
-            --label "rl-protect-malware" --label "$ISSUE_LABEL"
+            --label "dependency-malware" --label "$ISSUE_LABEL"
         fi
         if [[ -n "$STANDARD_COMMENT" ]]; then
           notify_bucket "$OUT/issue_standard.title" "$STANDARD_COMMENT" \
@@ -428,8 +428,8 @@ runs:
         BASELINE_FILE: ${{ steps.baseline.outputs.file }}
         SCANNED_BRANCH: ${{ steps.guard.outputs.scanned-branch }}
       run: |
-        git config user.name "rl-protect-monitor[bot]"
-        git config user.email "rl-protect-monitor@users.noreply.github.com"
+        git config user.name "dependency-monitor[bot]"
+        git config user.email "dependency-monitor@users.noreply.github.com"
 
         if [[ -z "$BASELINE_BRANCH" ]]; then
           # Mode 1: baseline lives on the scanned branch.
@@ -480,7 +480,7 @@ runs:
         # conflicted with. Same-monitor overlap is already serialised by the
         # workflow's concurrency group, but that group lives in a file the
         # consumer edits, so this cannot rely on it.
-        WORKTREE="$RUNNER_TEMP/rl-protect-baseline-worktree"
+        WORKTREE="$RUNNER_TEMP/dependency-baseline-worktree"
         pushed=""
         for attempt in 1 2 3; do
           # A worktree left by the previous attempt would fail `worktree add`,

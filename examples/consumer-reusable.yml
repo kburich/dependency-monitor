@@ -1,4 +1,4 @@
-# Copy this into your repo as .github/workflows/rl-protect-monitor.yml
+# Copy this into your repo as .github/workflows/dependency-monitor.yml
 #
 # Secrets to configure in your repo:
 #   RL_TOKEN        — Spectra Assure Community token (free: https://secure.software/)
@@ -13,7 +13,7 @@ on:
 
 jobs:
   monitor:
-    uses: kburich/rl-protect-monitor/.github/workflows/monitor.yml@v3
+    uses: kburich/dependency-monitor/.github/workflows/monitor.yml@v4
     permissions:
       contents: write
       issues: write

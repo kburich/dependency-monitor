@@ -120,7 +120,7 @@ class TestBaselineBranch:
     def test_auto_derives_a_branch_per_monitor(self):
         assert identity.resolve_baseline_branch(
             identity.AUTO, "package-lock.json"
-        ) == "rl-protect-baseline/package-lock.json"
+        ) == "dependency-baseline/package-lock.json"
 
     def test_an_explicit_branch_is_used_as_given(self):
         assert identity.resolve_baseline_branch("custom", "x") == "custom"
@@ -155,9 +155,9 @@ class TestCli:
                        for line in out.read_text().splitlines())
         assert written == {
             "id": "web-package-lock.json",
-            "baseline-branch": "rl-protect-baseline/web-package-lock.json",
-            "marker-standard": "rl-protect-monitor/web-package-lock.json",
-            "marker-critical": "rl-protect-malware/web-package-lock.json",
+            "baseline-branch": "dependency-baseline/web-package-lock.json",
+            "marker-standard": "dependency-monitor/web-package-lock.json",
+            "marker-critical": "dependency-malware/web-package-lock.json",
         }
 
     def test_the_two_markers_are_never_equal(self, tmp_path, monkeypatch):
